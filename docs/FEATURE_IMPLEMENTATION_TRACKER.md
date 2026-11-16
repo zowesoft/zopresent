@@ -612,6 +612,14 @@ with no scripture on the wall. The card is never auto-projected: its method is
 not the explicit one, so the safety intent gate blocks it at every setting
 (`internal/asr/contextual.go`, `internal/detection/contextual.go`).
 
+Several passages spoken in one breath keep their own cards: a segment that
+settles "John 3:16", "Romans 8:28" and "1 Peter 5:7" finalizes three distinct
+candidates with no false repeats, because `overlaps` only folds hearings of the
+same book and chapter. The conflict gate then holds all three back from
+auto-projection (more than one settled in the segment) so the operator chooses
+which the preacher meant; multiple references ride the explicit lane rather than
+being a separate detector (`internal/detection/segment_test.go`).
+
 ### Engine provisioning (F07 slice — landed)
 
 The engine is only *discovered* if it already sits on disk. Discovery now scans

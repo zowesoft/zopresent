@@ -233,6 +233,44 @@ func TestSermonReferencesStayDistinctAcrossSegments(t *testing.T) {
 	}
 }
 
+func TestFinalizeKeepsMultipleReferencesInOneSegmentSeparate(t *testing.T) {
+	queue, _ := newClockedQueue(t)
+
+	// The PRD's "multiple references" type: a speaker names several passages in
+	// sequence. They must queue as their own cards, not collapse into one.
+	queue.BeginSegment()
+	settled, err := queue.Finalize("John 3:16 and Romans 8:28 and 1 Peter 5:7",
+		[]asr.Detection{
+			detectionOf(t, "John 3:16"),
+			detectionOf(t, "Romans 8:28"),
+			detectionOf(t, "1 Peter 5:7"),
+		}, "service-1")
+	if err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+	if settled.Finalized != 3 || settled.Repeats != 0 {
+		t.Fatalf("finalize result = %+v, want three settled cards and no false repeats", settled)
+	}
+
+	pending := queue.List("service-1")
+	if len(pending) != 3 {
+		got := make([]string, 0, len(pending))
+		for _, c := range pending {
+			got = append(got, c.Reference.String())
+		}
+		t.Fatalf("queue holds %d cards (%v), want all three distinct references", len(pending), got)
+	}
+	want := []string{"John 3:16", "Romans 8:28", "1 Peter 5:7"}
+	for i, ref := range want {
+		if pending[i].Reference.String() != ref {
+			t.Errorf("card %d = %q, want %q", i, pending[i].Reference.String(), ref)
+		}
+		if pending[i].Repeats != 0 {
+			t.Errorf("card %d repeats = %d, want 0", i, pending[i].Repeats)
+		}
+	}
+}
+
 func TestRefinementInsideWindowDoesNotCountAsRepeat(t *testing.T) {
 	queue, clock := newClockedQueue(t)
 
