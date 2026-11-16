@@ -75,6 +75,90 @@
                                          "1 Samuel 1"
                                      ],
                       "transcript":  "For our tenth anniversary we return to where it all started, first Samuel chapter one, and Hannah\u0027s prayer. Also remember today is May twenty eighth at one hundred nineteen years our oldest member turns one hundred twenty."
+                  },
+                  {
+                      "id":  "verse-call-john",
+                      "file":  "verse-call-john.wav",
+                      "references":  [
+                                         "John 3:29"
+                                     ],
+                      "transcript":  "Now read verse twenty nine with me. That is where the promise lands tonight, and it is the verse the whole chapter has been walking toward.",
+                      "type":  "contextual",
+                      "established":  "John 3"
+                  },
+                  {
+                      "id":  "verse-call-psalm",
+                      "file":  "verse-call-psalm.wav",
+                      "references":  [
+                                         "Psalms 23:4"
+                                     ],
+                      "transcript":  "Let us go back to verse four for a moment. That is the verse that carries the whole psalm, so read it slowly and let it settle.",
+                      "type":  "contextual",
+                      "established":  "Psalms 23"
+                  },
+                  {
+                      "id":  "verse-call-trap",
+                      "file":  "verse-call-trap.wav",
+                      "references":  [
+
+                                     ],
+                      "transcript":  "The youth group meets on the twenty eighth at six thirty, and the choir still needs fifteen volunteers for the Christmas program.",
+                      "type":  "contextual",
+                      "established":  "Romans 8"
+                  },
+                  {
+                      "id":  "shepherd-quote",
+                      "file":  "shepherd-quote.wav",
+                      "references":  [
+                                         "Psalms 23:1-2"
+                                     ],
+                      "transcript":  "The Lord is my shepherd; I shall not want. He maketh me to lie down in green pastures: he leadeth me beside the still waters.",
+                      "type":  "quote"
+                  },
+                  {
+                      "id":  "john316-quote",
+                      "file":  "john316-quote.wav",
+                      "references":  [
+                                         "John 3:16"
+                                     ],
+                      "transcript":  "For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.",
+                      "type":  "quote"
+                  },
+                  {
+                      "id":  "quote-trap",
+                      "file":  "quote-trap.wav",
+                      "references":  [
+
+                                     ],
+                      "transcript":  "The food pantry served one hundred nineteen families last month, and the Christmas program is on the twenty eighth. Come hungry, and bring a friend.",
+                      "type":  "quote"
+                  },
+                  {
+                      "id":  "romans-correction",
+                      "file":  "romans-correction.wav",
+                      "references":  [
+                                         "Romans 8:29"
+                                     ],
+                      "transcript":  "Let us read Romans chapter eight verse twenty eight. No wait, I mean Romans chapter eight verse twenty nine.",
+                      "type":  "correction"
+                  },
+                  {
+                      "id":  "john-correction",
+                      "file":  "john-correction.wav",
+                      "references":  [
+                                         "John 3:17"
+                                     ],
+                      "transcript":  "Turn to John chapter three verse sixteen. Scratch that, let us go to John chapter three verse seventeen instead.",
+                      "type":  "correction"
+                  },
+                  {
+                      "id":  "correction-no-prior",
+                      "file":  "correction-no-prior.wav",
+                      "references":  [
+                                         "Romans 8:28"
+                                     ],
+                      "transcript":  "Actually, I mean, let us turn to Romans chapter eight verse twenty eight. That is the promise we are resting on tonight.",
+                      "type":  "correction"
                   }
               ]
 }

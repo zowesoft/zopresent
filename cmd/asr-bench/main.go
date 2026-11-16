@@ -1,11 +1,14 @@
 // Command asr-bench transcribes benchmark clips through one or more ASR engine
-// sidecars, runs each transcript through every enabled detection type, and
+// sidecars, runs each transcript through its declared detection type, and
 // scores reference recall plus word error rate where gold text is available.
 //
-// Each detection type (explicit reference, contextual reference, quotation) is
-// scored as its own lane with its own confidence sweep and recommendation, so
-// each type can be calibrated against real, labeled audio and cleared against
-// the PRD's precision bar before it is enabled.
+// Each detection type (explicit reference, contextual reference, quotation,
+// reference correction) is scored as its own lane with its own confidence sweep
+// and recommendation, so each type can be calibrated against real, labeled
+// audio and cleared against the PRD's precision bar before it is enabled. A
+// clip declares the type it exercises with "type" (default explicit), and a
+// lane only scores its own clips, so a bare-verse or quotation clip is never
+// counted as a miss against the explicit detector that deliberately ignores it.
 //
 // Usage:
 //
@@ -14,9 +17,9 @@
 //
 // With no -engine flags the gold transcripts (or .txt files beside the clips)
 // run through the detector alone, isolating the detector from engine behavior.
-// A clip may declare an "established" passage to exercise the contextual lane;
-// the quote lane activates when -translation-dir and -core-db point at an
-// installed translation catalog. See benchmarks/README.md.
+// A contextual clip declares an "established" passage its bare verse mentions
+// resolve against; the quote lane activates when -translation-dir and -core-db
+// point at an installed translation catalog. See benchmarks/README.md.
 package main
 
 import (
@@ -50,6 +53,11 @@ type benchClip struct {
 	// File is the WAV path relative to the set directory. Optional in
 	// detector-only mode.
 	File string `json:"file"`
+	// Type names the detection lane this clip exercises: explicit (the
+	// default), contextual, quote or correction. A lane only scores its own
+	// clips, so a bare-verse or quotation hearing is never counted as a miss
+	// against the explicit detector that deliberately ignores it.
+	Type string `json:"type,omitempty"`
 	// References are the gold references spoken in the clip.
 	References []string `json:"references"`
 	// Established is the passage on the wall when the clip was spoken; a bare
@@ -58,6 +66,18 @@ type benchClip struct {
 	// Transcript optionally provides gold text used for WER scoring and for
 	// detector-only runs.
 	Transcript string `json:"transcript"`
+}
+
+// clipType resolves the lane a clip belongs to. A clip that declares an
+// established passage without a type is a contextual hearing.
+func clipType(clip benchClip) string {
+	if clip.Type != "" {
+		return clip.Type
+	}
+	if clip.Established != "" {
+		return "contextual"
+	}
+	return "explicit"
 }
 
 type clipResult struct {
@@ -186,19 +206,23 @@ func main() {
 }
 
 // buildLanes enables the explicit lane always, the contextual lane when a clip
-// declares an established passage, and the quote lane when a translation
-// catalog is pointed at. Each lane scores the confidence the app would really
-// show, so the sweep describes production bands, not a benchmark copy.
+// declares an established passage, the correction lane when a clip is labeled a
+// correction, and the quote lane when a translation catalog is pointed at. Each
+// lane scores the confidence the app would really show, so the sweep describes
+// production bands, not a benchmark copy.
 func buildLanes(set manifest, translationDir, coreDB, translationID string) []laneDef {
 	lanes := []laneDef{
 		{name: "explicit", run: func(i int, text string) []asr.Detection { return asr.DetectReferences(text) }},
 	}
 
 	hasEstablished := false
+	hasCorrection := false
 	for _, clip := range set.Clips {
-		if clip.Established != "" {
+		switch clipType(clip) {
+		case "contextual":
 			hasEstablished = true
-			break
+		case "correction":
+			hasCorrection = true
 		}
 	}
 	if hasEstablished {
@@ -210,6 +234,35 @@ func buildLanes(set manifest, translationDir, coreDB, translationID string) []la
 			}
 			explicit := asr.DetectReferences(text)
 			return detection.DetectContextualReferences(text, est, explicit, func(int) bool { return true })
+		}})
+	}
+
+	if hasCorrection {
+		lanes = append(lanes, laneDef{name: "correction", run: func(i int, text string) []asr.Detection {
+			// Mirror the app: a cue tags the hearings, and the queue supersedes
+			// the earlier card. Score what survives the fold, because that is
+			// what the operator would see — not the raw pair of hearings.
+			explicit := asr.DetectReferences(text)
+			if asr.HasCorrectionCue(text) {
+				for d := range explicit {
+					explicit[d].Method = detection.MethodReferenceCorrection
+				}
+			}
+			queue := detection.New(nil)
+			queue.BeginSegment()
+			if _, err := queue.Finalize(text, explicit, "bench"); err != nil {
+				return nil
+			}
+			var out []asr.Detection
+			for _, card := range queue.List("bench") {
+				out = append(out, asr.Detection{
+					Reference:  card.Reference,
+					Raw:        card.Raw,
+					Method:     card.Method,
+					Confidence: card.Confidence,
+				})
+			}
+			return out
 		}})
 	}
 
@@ -367,6 +420,11 @@ func scoreRun(set manifest, gold goldRefs, run benchmarkRun, lanes []laneDef) en
 		lane := laneSummary{Name: def.name}
 		for i := range set.Clips {
 			clip := set.Clips[i]
+			// A lane only scores the clips labeled for it; gold references are
+			// per-type truth, not a shared pool every detector must find.
+			if clipType(clip) != def.name {
+				continue
+			}
 			if run.errs[i] != nil {
 				result := clipResult{Clip: clipName(clip, i), Expected: clip.References,
 					Detected: []string{fmt.Sprintf("ERROR: %v", run.errs[i])}, Missed: clip.References}

@@ -19,10 +19,11 @@ the PRD's precision bar before it is enabled in the app.
 ```
 benchmarks/
   fetch.ps1        downloads whisper.cpp CPU binaries + tiny.en model
-  make-tts-set.ps1 generates a synthetic sermon set (Windows SAPI voices)
+  make-tts-set.ps1 generates a synthetic set covering all four detection
+                   types (Windows SAPI voices)
   sample-set/      detector-only demo set (no audio required)
   smoke-set/       engine smoke test (SAPI-synthesized speech + tone)
-  tts-set/         generated sermon set with varied reference phrasings
+  tts-set/         generated set: explicit, contextual, quote, correction
   models/          downloaded .ggml/.onnx models          [gitignored]
   tools/           downloaded engine binaries            [gitignored]
   dumps/           -dump transcripts for debugging       [gitignored]
@@ -93,9 +94,24 @@ it under `benchmarks/sermon-set/`:
     {
       "id": "verse-mention",
       "file": "verse-twenty-nine.wav",
+      "type": "contextual",
       "established": "Romans 8",
       "references": ["Romans 8:29"],
       "transcript": "and verse twenty nine is the promise we hold onto"
+    },
+    {
+      "id": "shepherd-quote",
+      "file": "shepherd.wav",
+      "type": "quote",
+      "references": ["Psalms 23:1-2"],
+      "transcript": "the Lord is my shepherd; I shall not want"
+    },
+    {
+      "id": "romans-correction",
+      "file": "correction.wav",
+      "type": "correction",
+      "references": ["Romans 8:29"],
+      "transcript": "Romans eight twenty eight. No wait, I mean Romans eight twenty nine."
     }
   ]
 }
@@ -103,10 +119,15 @@ it under `benchmarks/sermon-set/`:
 
 - `references` — gold truth; chapter-level hits count, verse-exact is
   reported separately (ranges legitimately widen).
+- `type` — the lane the clip exercises: `explicit` (the default),
+  `contextual`, `quote` or `correction`. A lane only scores its own clips, so
+  a bare-verse or quotation hearing is never counted as a miss against the
+  explicit detector that deliberately ignores it. Gold references are the
+  truth for that clip's type — for a correction, the passage the queue should
+  keep after the supersede.
 - `transcript` — optional; makes WER appear in the report.
-- `established` — optional; the passage already on the wall when the clip was
-  spoken. A bare "verse N" mention resolves against it, which activates the
-  contextual lane for the set.
+- `established` — the passage already on the wall when a contextual clip was
+  spoken; its bare "verse N" mentions resolve against it.
 - No `file` + a `transcript` = detector-only clip (no audio needed).
 
 Any WAV encoding the engine ecosystem produces (8/16/24/32-bit PCM, 32/64-bit
@@ -143,10 +164,19 @@ before scoring; engine log noise on stdout is removed automatically.
 
 ## Detection lanes
 
+Each clip declares the type it exercises (`type`, default `explicit`), and a
+lane only scores its own clips — gold references are per-type truth, not a
+shared pool every detector must find.
+
 - **explicit** — always on; `asr.DetectReferences` on the transcript.
-- **contextual** — on when any clip declares `established`; bare verse
-  mentions resolve against that passage. Confidence is the app's contextual
-  score, so the sweep shows whether it can ever clear the projection bar.
+- **contextual** — on when any clip is labeled `contextual`; its bare verse
+  mentions resolve against the clip's `established` passage. Confidence is the
+  app's contextual score, so the sweep shows whether it can ever clear the
+  projection bar.
+- **correction** — on when any clip is labeled `correction`; a cue phrase tags
+  the hearings and the queue supersedes the earlier card, exactly as the app
+  does. The lane scores what survives the fold, because that is what the
+  operator would see — not the raw pair of hearings.
 - **quote** — on when both flags point at an installed catalog:
 
 ```powershell
@@ -158,9 +188,7 @@ go run ./cmd/asr-bench -set benchmarks/sermon-set `
 
 The quote lane matches each transcript against the translation with the same
 `MatchQuote` + `DetectQuotes` path the live pipeline uses, so its scores are
-the real quote confidences, not a benchmark approximation. Lanes are scored
-independently: a clip an explicit lane misses may still be a contextual or
-quote hit, and each lane's recall is its own.
+the real quote confidences, not a benchmark approximation.
 
 ## Metrics
 
@@ -177,9 +205,9 @@ quote hit, and each lane's recall is its own.
 ## Confidence calibration
 
 Every detection is scored with the confidence the app would really show —
-`internal/confidence.Evaluate` for explicit phrasings, the detection's own
-score for contextual and quote hits — so the report describes the shipped
-bands rather than a benchmark copy. Each lane prints:
+`internal/confidence.Evaluate` for explicit and correction phrasings, the
+detection's own score for contextual and quote hits — so the report describes
+the shipped bands rather than a benchmark copy. Each lane prints:
 
 - **confidence** — detections per band, and how many of each were real. Errors
   clustering in `high` mean the band edges are too generous.
