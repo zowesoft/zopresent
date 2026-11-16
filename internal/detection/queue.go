@@ -73,6 +73,8 @@ const (
 	ExplanationSpokenQuote         = "Spoken quote matched in the selected translation"
 	MethodContextualReference      = "contextual-reference"
 	ExplanationContextualReference = "Contextual reference: the verse called for by the passage on the wall"
+	MethodReferenceCorrection      = "reference-correction"
+	ExplanationReferenceCorrection = "Reference correction: the speaker restated the passage, so this card replaces the earlier one"
 )
 
 // scoreDetection resolves the method, explanation and confidence for one
@@ -87,6 +89,9 @@ func scoreDetection(transcript string, detection asr.Detection) (method, explana
 	}
 	if detection.Method == MethodContextualReference {
 		return MethodContextualReference, ExplanationContextualReference, detection.Confidence
+	}
+	if detection.Method == MethodReferenceCorrection {
+		return MethodReferenceCorrection, ExplanationReferenceCorrection, confidence.Evaluate(transcript, detection.Reference)
 	}
 	return MethodExplicitReference, ExplanationExplicitReference, confidence.Evaluate(transcript, detection.Reference)
 }
@@ -378,9 +383,21 @@ func (q *Queue) CloseSegment() {
 // folded into: the same words heard in another service are that service's
 // hearing.
 func (q *Queue) foldRepeat(detection asr.Detection, transcript string, now time.Time, serviceID string) (repeated, folded bool) {
+	correcting := detection.Method == MethodReferenceCorrection
+	target := -1
 	for i := range q.pending {
 		candidate := q.pending[i]
-		if !candidate.Finalized || candidate.ServiceID != serviceID || !overlaps(candidate.Reference, detection.Reference) {
+		if !candidate.Finalized || candidate.ServiceID != serviceID {
+			continue
+		}
+		// A correction supersedes the most recent card of the same service in the
+		// same book ("I said Romans 8:28, I mean Romans 8:29"). A stray "actually"
+		// in passing speech cannot reach into another book, so it changes nothing.
+		// Anything else must overlap to fold, as before.
+		if !correcting && !overlaps(candidate.Reference, detection.Reference) {
+			continue
+		}
+		if correcting && candidate.Reference.Book.ID != detection.Reference.Book.ID {
 			continue
 		}
 		heard := candidate.FinalizedAt
@@ -390,20 +407,27 @@ func (q *Queue) foldRepeat(detection asr.Detection, transcript string, now time.
 		if now.Sub(heard) >= RepeatWindow {
 			continue
 		}
-		repeated = candidate.Reference.String() == detection.Reference.String()
-		if repeated {
-			candidate.Repeats++
+		target = i
+		if !correcting {
+			break
 		}
-		candidate.Transcript = transcript
-		candidate.Raw = detection.Raw
-		candidate.Reference = detection.Reference
-		candidate.Method, candidate.Explanation, candidate.Confidence = scoreDetection(transcript, detection)
-		candidate.Version++
-		candidate.LastHeardAt = now
-		q.pending[i] = candidate
-		return repeated, true
 	}
-	return false, false
+	if target < 0 {
+		return false, false
+	}
+	candidate := q.pending[target]
+	repeated = !correcting && candidate.Reference.String() == detection.Reference.String()
+	if repeated {
+		candidate.Repeats++
+	}
+	candidate.Transcript = transcript
+	candidate.Raw = detection.Raw
+	candidate.Reference = detection.Reference
+	candidate.Method, candidate.Explanation, candidate.Confidence = scoreDetection(transcript, detection)
+	candidate.Version++
+	candidate.LastHeardAt = now
+	q.pending[target] = candidate
+	return repeated, true
 }
 
 // overlaps tests whether one hearing refines another. A zero end is the whole

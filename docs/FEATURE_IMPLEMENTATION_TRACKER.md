@@ -620,6 +620,17 @@ auto-projection (more than one settled in the segment) so the operator chooses
 which the preacher meant; multiple references ride the explicit lane rather than
 being a separate detector (`internal/detection/segment_test.go`).
 
+A speaker taking a reference back is heard as a **reference correction**: a cue
+phrase ("no wait", "I mean", "scratch that", "let me correct that") tags the
+explicit hearing `reference-correction`, and the queue supersedes the most recent
+pending card of the same service and book within `RepeatWindow` instead of
+stacking a second passage beside it — the corrected card keeps its ID, bumps its
+version and resets its repeats. The same-book guard means a stray "actually" in
+passing speech cannot reach into another book, and a correction with no prior
+card simply queues. The cue vocabulary lives in `internal/asr/correction.go`
+(`HasCorrectionCue`); the supersede logic is `foldRepeat` in
+`internal/detection/queue.go`, covered by `correction_test.go` in both packages.
+
 ### Engine provisioning (F07 slice — landed)
 
 The engine is only *discovered* if it already sits on disk. Discovery now scans
