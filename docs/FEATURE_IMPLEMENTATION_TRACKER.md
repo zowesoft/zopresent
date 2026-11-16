@@ -631,6 +631,16 @@ card simply queues. The cue vocabulary lives in `internal/asr/correction.go`
 (`HasCorrectionCue`); the supersede logic is `foldRepeat` in
 `internal/detection/queue.go`, covered by `correction_test.go` in both packages.
 
+The benchmark harness now scores **each detection type as its own lane** —
+explicit always, contextual when a clip declares an `established` passage, quote
+when `-translation-dir` and `-core-db` point at an installed catalog — each with
+its own band accuracy, `confidence.Sweep` and `Recommend` verdict against the
+PRD's 99% projection bar. A lane uses the confidence the app would really show
+(the detection's own score for contextual and quote hits, `confidence.Evaluate`
+for explicit phrasings), so the sweep describes production bands rather than a
+benchmark copy, and a type can be cleared on real labeled audio before it is
+enabled (`cmd/asr-bench/main.go`, `benchmarks/README.md`).
+
 ### Engine provisioning (F07 slice — landed)
 
 The engine is only *discovered* if it already sits on disk. Discovery now scans

@@ -1,6 +1,11 @@
 // Command asr-bench transcribes benchmark clips through one or more ASR engine
-// sidecars, runs each transcript through the detector, and scores reference
-// recall plus word error rate where gold text is available.
+// sidecars, runs each transcript through every enabled detection type, and
+// scores reference recall plus word error rate where gold text is available.
+//
+// Each detection type (explicit reference, contextual reference, quotation) is
+// scored as its own lane with its own confidence sweep and recommendation, so
+// each type can be calibrated against real, labeled audio and cleared against
+// the PRD's precision bar before it is enabled.
 //
 // Usage:
 //
@@ -9,11 +14,14 @@
 //
 // With no -engine flags the gold transcripts (or .txt files beside the clips)
 // run through the detector alone, isolating the detector from engine behavior.
-// See benchmarks/README.md.
+// A clip may declare an "established" passage to exercise the contextual lane;
+// the quote lane activates when -translation-dir and -core-db point at an
+// installed translation catalog. See benchmarks/README.md.
 package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -23,7 +31,10 @@ import (
 	"time"
 
 	"zopresent/internal/asr"
+	"zopresent/internal/bible"
 	"zopresent/internal/confidence"
+	"zopresent/internal/database"
+	"zopresent/internal/detection"
 	"zopresent/internal/scripture"
 )
 
@@ -41,6 +52,9 @@ type benchClip struct {
 	File string `json:"file"`
 	// References are the gold references spoken in the clip.
 	References []string `json:"references"`
+	// Established is the passage on the wall when the clip was spoken; a bare
+	// "verse N" mention resolves against it for the contextual lane.
+	Established string `json:"established,omitempty"`
 	// Transcript optionally provides gold text used for WER scoring and for
 	// detector-only runs.
 	Transcript string `json:"transcript"`
@@ -55,15 +69,15 @@ type clipResult struct {
 	Extra    []string `json:"extra"`
 	// Scores are the confidence each detected reference received, in the same
 	// order as Detected.
-	Scores       []float64 `json:"scores,omitempty"`
-	VerseExact   int       `json:"verse_hits"`
-	Transcript   string    `json:"transcript,omitempty"`
-	WER          float64   `json:"wer,omitempty"`
-	HasGoldWords bool      `json:"has_gold_words"`
+	Scores     []float64 `json:"scores,omitempty"`
+	VerseExact int       `json:"verse_hits"`
+	Transcript string    `json:"transcript,omitempty"`
+	WER        float64   `json:"wer,omitempty"`
 }
 
-type engineSummary struct {
-	Engine     string       `json:"engine"`
+// laneSummary is one detection type's score over the whole set.
+type laneSummary struct {
+	Name       string       `json:"name"`
 	Clips      []clipResult `json:"clips"`
 	Expected   int          `json:"expected"`
 	Hits       int          `json:"hits"`
@@ -80,14 +94,28 @@ type engineSummary struct {
 	Calibration   []confidence.Point `json:"calibration,omitempty"`
 	// observations feeds the sweep and is never serialised.
 	observations []confidence.Observation
-	TranscribeMs int64   `json:"transcribe_ms"`
-	MeanWER      float64 `json:"mean_wer,omitempty"`
-	WERClips     int     `json:"wer_clips"`
+}
+
+type engineSummary struct {
+	Engine       string        `json:"engine"`
+	Lanes        []laneSummary `json:"lanes"`
+	TranscribeMs int64         `json:"transcribe_ms"`
+	MeanWER      float64       `json:"mean_wer,omitempty"`
+	WERClips     int           `json:"wer_clips"`
 }
 
 type engineSummaries struct {
 	Engines []engineSummary `json:"engines"`
 }
+
+// laneDef names a detection type and produces its detections for one transcript.
+type laneDef struct {
+	name string
+	run  func(i int, text string) []asr.Detection
+}
+
+// quoteMatchLimit mirrors the app's per-chunk quote index budget.
+const quoteMatchLimit = 32
 
 func main() {
 	setDir := flag.String("set", "benchmarks/sermon-set", "directory containing manifest.json and clip audio")
@@ -95,6 +123,9 @@ func main() {
 	flag.Var(&engineSpecs, "engine", "engine spec name=bin args... {audio}; repeatable")
 	dumpTranscripts := flag.String("dump", "", "optional directory to write raw transcripts per engine")
 	outJSON := flag.String("out", "", "optional path for a JSON report")
+	translationDir := flag.String("translation-dir", "", "translations directory; with -core-db enables the quote lane")
+	coreDB := flag.String("core-db", "", "core database holding the translation catalog; enables the quote lane")
+	translationID := flag.String("translation", "kjv", "translation id for the quote lane")
 	flag.Parse()
 
 	setPath = strings.TrimSuffix(*setDir, "/") // normalise windows slashes naturally
@@ -137,9 +168,11 @@ func main() {
 		runs = append(runs, benchmarkRun{name: "detector-only", texts: texts, errs: errs})
 	}
 
+	lanes := buildLanes(set, *translationDir, *coreDB, *translationID)
+
 	var report engineSummaries
 	for _, run := range runs {
-		report.Engines = append(report.Engines, scoreRun(set, gold, run))
+		report.Engines = append(report.Engines, scoreRun(set, gold, run, lanes))
 	}
 
 	printReport(report.Engines)
@@ -150,6 +183,53 @@ func main() {
 		}
 		fmt.Printf("report written to %s\n", *outJSON)
 	}
+}
+
+// buildLanes enables the explicit lane always, the contextual lane when a clip
+// declares an established passage, and the quote lane when a translation
+// catalog is pointed at. Each lane scores the confidence the app would really
+// show, so the sweep describes production bands, not a benchmark copy.
+func buildLanes(set manifest, translationDir, coreDB, translationID string) []laneDef {
+	lanes := []laneDef{
+		{name: "explicit", run: func(i int, text string) []asr.Detection { return asr.DetectReferences(text) }},
+	}
+
+	hasEstablished := false
+	for _, clip := range set.Clips {
+		if clip.Established != "" {
+			hasEstablished = true
+			break
+		}
+	}
+	if hasEstablished {
+		established := parseEstablished(set.Clips)
+		lanes = append(lanes, laneDef{name: "contextual", run: func(i int, text string) []asr.Detection {
+			est := established[i]
+			if est.Book.ID <= 0 || est.Chapter <= 0 {
+				return nil
+			}
+			explicit := asr.DetectReferences(text)
+			return detection.DetectContextualReferences(text, est, explicit, func(int) bool { return true })
+		}})
+	}
+
+	if translationDir != "" && coreDB != "" {
+		ctx := context.Background()
+		core, err := database.OpenReadOnly(ctx, coreDB)
+		if err != nil {
+			exit(fmt.Sprintf("open core db %s: %v", coreDB, err))
+		}
+		repo := bible.NewSQLiteRepository(core, translationDir)
+		lanes = append(lanes, laneDef{name: "quote", run: func(i int, text string) []asr.Detection {
+			explicit := asr.DetectReferences(text)
+			matches, err := repo.MatchQuote(ctx, translationID, text, quoteMatchLimit)
+			if err != nil {
+				return nil
+			}
+			return detection.DetectQuotes(text, matches, explicit, nil)
+		}})
+	}
+	return lanes
 }
 
 // setPath is the directory of the active benchmark set; one process examines
@@ -256,6 +336,22 @@ func parseGold(clips []benchClip) goldRefs {
 	return gold
 }
 
+func parseEstablished(clips []benchClip) []scripture.Reference {
+	out := make([]scripture.Reference, len(clips))
+	for i, clip := range clips {
+		if clip.Established == "" {
+			continue
+		}
+		ref, err := scripture.Parse(clip.Established)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: clip %s established %q: %v\n", clipName(clip, i), clip.Established, err)
+			continue
+		}
+		out[i] = ref
+	}
+	return out
+}
+
 // benchmarkRun is one engine's output over the manifest.
 type benchmarkRun struct {
 	name    string
@@ -264,110 +360,118 @@ type benchmarkRun struct {
 	elapsed int64
 }
 
-func scoreRun(set manifest, gold goldRefs, run benchmarkRun) engineSummary {
+func scoreRun(set manifest, gold goldRefs, run benchmarkRun, lanes []laneDef) engineSummary {
 	summary := engineSummary{Engine: run.name, TranscribeMs: run.elapsed}
 
-	for i := range set.Clips {
-		clip := set.Clips[i]
-		result := clipResult{Clip: clipName(clip, i), Expected: clip.References}
-
-		if run.errs[i] != nil {
-			result.Detected = []string{fmt.Sprintf("ERROR: %v", run.errs[i])}
-			result.Missed = clip.References
-			summary.Clips = append(summary.Clips, result)
-			summary.Expected += len(clip.References)
-			continue
-		}
-
-		detections := asr.DetectReferences(run.texts[i])
-		result.Transcript = run.texts[i]
-
-		// Greedy bipartite match on book+chapter; verse precision is
-		// reported separately because ranges legitimately widen.
-		matchedDetection := make([]bool, len(detections))
-		matchedGold := make([]bool, len(gold[i]))
-		for d := range detections {
-			for g := range gold[i] {
-				if matchedGold[g] {
-					continue
-				}
-				if detections[d].Reference.Book.ID == gold[i][g].Book.ID &&
-					detections[d].Reference.Chapter == gold[i][g].Chapter {
-					matchedDetection[d] = true
-					matchedGold[g] = true
-					result.Hits = append(result.Hits, detections[d].Reference.String())
-					if detections[d].Reference.VerseStart == gold[i][g].VerseStart {
-						result.VerseExact++
-					}
-					break
-				}
+	for _, def := range lanes {
+		lane := laneSummary{Name: def.name}
+		for i := range set.Clips {
+			clip := set.Clips[i]
+			if run.errs[i] != nil {
+				result := clipResult{Clip: clipName(clip, i), Expected: clip.References,
+					Detected: []string{fmt.Sprintf("ERROR: %v", run.errs[i])}, Missed: clip.References}
+				lane.Clips = append(lane.Clips, result)
+				lane.Expected += len(clip.References)
+				continue
 			}
+			accumulate(&lane, clip, i, run.texts[i], def.run(i, run.texts[i]), gold[i])
 		}
-		for d := range detections {
-			result.Detected = append(result.Detected, detections[d].Reference.String())
-			if !matchedDetection[d] {
-				result.Extra = append(result.Extra, detections[d].Reference.String())
-			}
-		}
-		for g := range gold[i] {
-			if !matchedGold[g] {
-				result.Missed = append(result.Missed, gold[i][g].String())
-			}
-		}
+		lane.Calibration = confidence.Sweep(lane.observations, lane.Expected, confidence.DefaultThresholds())
+		summary.Lanes = append(summary.Lanes, lane)
+	}
 
-		// Confidence is scored with the function the app uses, so the sweep
-		// below describes production bands rather than a benchmark copy.
-		for d := range detections {
-			score := confidence.Evaluate(run.texts[i], detections[d].Reference)
-			result.Scores = append(result.Scores, score)
-			summary.observations = append(summary.observations,
-				confidence.Observation{Score: score, Matched: matchedDetection[d]})
-			switch confidence.BandOf(score) {
-			case confidence.BandHigh:
-				if matchedDetection[d] {
-					summary.HighCorrect++
-				} else {
-					summary.HighFalse++
-				}
-			case confidence.BandMedium:
-				if matchedDetection[d] {
-					summary.MediumCorrect++
-				} else {
-					summary.MediumFalse++
-				}
-			default:
-				if matchedDetection[d] {
-					summary.LowCorrect++
-				} else {
-					summary.LowFalse++
-				}
+	// WER is meaningful only when the transcript came out of an engine;
+	// detector-only mode echoes the gold text, so scoring it would be 0.
+	if run.name != "detector-only" {
+		for i := range set.Clips {
+			clip := set.Clips[i]
+			if run.errs[i] != nil || clip.Transcript == "" {
+				continue
 			}
-		}
-
-		// WER is meaningful only when the transcript came out of an engine;
-		// detector-only mode echoes the gold text, so scoring it would be 0.
-		if clip.Transcript != "" && run.name != "detector-only" {
-			result.HasGoldWords = true
-			result.WER = wordErrorRate(run.texts[i], clip.Transcript)
+			summary.MeanWER += wordErrorRate(run.texts[i], clip.Transcript)
 			summary.WERClips++
 		}
-
-		summary.Expected += len(clip.References)
-		summary.Hits += len(result.Hits)
-		summary.Extra += len(result.Extra)
-		summary.VerseExact += result.VerseExact
-		if result.HasGoldWords {
-			summary.MeanWER += result.WER
+		if summary.WERClips > 0 {
+			summary.MeanWER /= float64(summary.WERClips)
 		}
-		summary.Clips = append(summary.Clips, result)
-	}
-
-	summary.Calibration = confidence.Sweep(summary.observations, summary.Expected, confidence.DefaultThresholds())
-
-	if summary.WERClips > 0 {
-		summary.MeanWER /= float64(summary.WERClips)
 	}
 	return summary
+}
+
+// accumulate matches one clip's detections against its gold on book+chapter
+// (verse precision is reported separately because ranges legitimately widen)
+// and records the confidence each detection would carry in the app.
+func accumulate(lane *laneSummary, clip benchClip, index int, transcript string, detections []asr.Detection, gold []scripture.Reference) {
+	result := clipResult{Clip: clipName(clip, index), Expected: clip.References, Transcript: transcript}
+
+	matchedDetection := make([]bool, len(detections))
+	matchedGold := make([]bool, len(gold))
+	for d := range detections {
+		for g := range gold {
+			if matchedGold[g] {
+				continue
+			}
+			if detections[d].Reference.Book.ID == gold[g].Book.ID &&
+				detections[d].Reference.Chapter == gold[g].Chapter {
+				matchedDetection[d] = true
+				matchedGold[g] = true
+				result.Hits = append(result.Hits, detections[d].Reference.String())
+				if detections[d].Reference.VerseStart == gold[g].VerseStart {
+					result.VerseExact++
+				}
+				break
+			}
+		}
+	}
+	for d := range detections {
+		result.Detected = append(result.Detected, detections[d].Reference.String())
+		if !matchedDetection[d] {
+			result.Extra = append(result.Extra, detections[d].Reference.String())
+		}
+	}
+	for g := range gold {
+		if !matchedGold[g] {
+			result.Missed = append(result.Missed, gold[g].String())
+		}
+	}
+
+	for d := range detections {
+		// A quote or contextual detection already carries the confidence the
+		// app would show; an explicit reference is scored from its phrasing.
+		score := detections[d].Confidence
+		if score <= 0 {
+			score = confidence.Evaluate(transcript, detections[d].Reference)
+		}
+		result.Scores = append(result.Scores, score)
+		lane.observations = append(lane.observations,
+			confidence.Observation{Score: score, Matched: matchedDetection[d]})
+		switch confidence.BandOf(score) {
+		case confidence.BandHigh:
+			if matchedDetection[d] {
+				lane.HighCorrect++
+			} else {
+				lane.HighFalse++
+			}
+		case confidence.BandMedium:
+			if matchedDetection[d] {
+				lane.MediumCorrect++
+			} else {
+				lane.MediumFalse++
+			}
+		default:
+			if matchedDetection[d] {
+				lane.LowCorrect++
+			} else {
+				lane.LowFalse++
+			}
+		}
+	}
+
+	lane.Expected += len(gold)
+	lane.Hits += len(result.Hits)
+	lane.Extra += len(result.Extra)
+	lane.VerseExact += result.VerseExact
+	lane.Clips = append(lane.Clips, result)
 }
 
 func wordErrorRate(hypothesis, reference string) float64 {
@@ -422,48 +526,48 @@ func minInt(values ...int) int {
 func printReport(summaries []engineSummary) {
 	for _, s := range summaries {
 		fmt.Printf("== %s ==\n", s.Engine)
-		recall := 0.0
-		if s.Expected > 0 {
-			recall = float64(s.Hits) / float64(s.Expected) * 100
+		for _, lane := range s.Lanes {
+			fmt.Printf("  [%s]\n", lane.Name)
+			recall := 0.0
+			if lane.Expected > 0 {
+				recall = float64(lane.Hits) / float64(lane.Expected) * 100
+			}
+			precision := 0.0
+			if lane.Hits+lane.Extra > 0 {
+				precision = float64(lane.Hits) / float64(lane.Hits+lane.Extra) * 100
+			}
+			fmt.Printf("   recall %d/%d (%.1f%%)  precision %.1f%%  verse-exact %d/%d\n",
+				lane.Hits, lane.Expected, recall, precision, lane.VerseExact, lane.Expected)
+			printConfidence(lane)
+			for _, clip := range lane.Clips {
+				state := "OK"
+				switch {
+				case strings.Contains(strings.Join(clip.Detected, ""), "ERROR:"):
+					state = "ERROR"
+				case len(clip.Missed) > 0:
+					state = "MISS"
+				case len(clip.Extra) > 0:
+					state = "EXTRA"
+				}
+				fmt.Printf("   %-24s %s", clip.Clip, state)
+				if len(clip.Extra) > 0 {
+					fmt.Printf("  extra=%v", clip.Extra)
+				}
+				fmt.Println()
+				if len(clip.Missed) > 0 {
+					fmt.Printf("        missed %v\n", clip.Missed)
+				}
+				if state != "OK" && strings.TrimSpace(clip.Transcript) != "" {
+					shown := clip.Transcript
+					if len(shown) > 140 {
+						shown = shown[:140] + " [...]"
+					}
+					fmt.Printf("        | %s\n", shown)
+				}
+			}
 		}
-		precision := 0.0
-		if s.Hits+s.Extra > 0 {
-			precision = float64(s.Hits) / float64(s.Hits+s.Extra) * 100
-		}
-		fmt.Printf("   recall %d/%d (%.1f%%)  precision %.1f%%  verse-exact %d/%d\n",
-			s.Hits, s.Expected, recall, precision, s.VerseExact, s.Expected)
-		printConfidence(s)
 		if s.MeanWER > 0 {
 			fmt.Printf("   mean WER %.1f%% over %d clips\n", s.MeanWER*100, s.WERClips)
-		}
-		for _, clip := range s.Clips {
-			state := "OK"
-			switch {
-			case strings.Contains(strings.Join(clip.Detected, ""), "ERROR:"):
-				state = "ERROR"
-			case len(clip.Missed) > 0:
-				state = "MISS"
-			case len(clip.Extra) > 0:
-				state = "EXTRA"
-			}
-			fmt.Printf("   %-24s %s", clip.Clip, state)
-			if len(clip.Extra) > 0 {
-				fmt.Printf("  extra=%v", clip.Extra)
-			}
-			if clip.HasGoldWords {
-				fmt.Printf("  wer=%.1f%%", clip.WER*100)
-			}
-			fmt.Println()
-			if len(clip.Missed) > 0 {
-				fmt.Printf("        missed %v\n", clip.Missed)
-			}
-			if state != "OK" && strings.TrimSpace(clip.Transcript) != "" {
-				shown := clip.Transcript
-				if len(shown) > 140 {
-					shown = shown[:140] + " [...]"
-				}
-				fmt.Printf("        | %s\n", shown)
-			}
 		}
 		fmt.Println()
 	}
@@ -471,21 +575,21 @@ func printReport(summaries []engineSummary) {
 
 // printConfidence shows where the bands were right and what moving the
 // threshold would have cost, which is the whole point of the labeled set.
-func printConfidence(summary engineSummary) {
-	detected := summary.HighCorrect + summary.HighFalse +
-		summary.MediumCorrect + summary.MediumFalse + summary.LowCorrect + summary.LowFalse
+func printConfidence(lane laneSummary) {
+	detected := lane.HighCorrect + lane.HighFalse +
+		lane.MediumCorrect + lane.MediumFalse + lane.LowCorrect + lane.LowFalse
 	if detected == 0 {
 		return
 	}
 	fmt.Printf("   confidence  high %d/%d correct  medium %d/%d  low %d/%d\n",
-		summary.HighCorrect, summary.HighCorrect+summary.HighFalse,
-		summary.MediumCorrect, summary.MediumCorrect+summary.MediumFalse,
-		summary.LowCorrect, summary.LowCorrect+summary.LowFalse)
-	if len(summary.Calibration) == 0 {
+		lane.HighCorrect, lane.HighCorrect+lane.HighFalse,
+		lane.MediumCorrect, lane.MediumCorrect+lane.MediumFalse,
+		lane.LowCorrect, lane.LowCorrect+lane.LowFalse)
+	if len(lane.Calibration) == 0 {
 		return
 	}
 	fmt.Printf("   threshold  kept  correct  false  precision  recall\n")
-	for _, point := range summary.Calibration {
+	for _, point := range lane.Calibration {
 		fmt.Printf("     %.2f      %3d   %6d  %5d   %6.1f%%   %5.1f%%\n",
 			point.Threshold, point.Kept, point.Correct, point.False,
 			point.Precision*100, point.Recall*100)
@@ -493,7 +597,7 @@ func printConfidence(summary engineSummary) {
 
 	// The table is for reading the trade-off; this line is the answer the
 	// operator came for, on the PRD's own precision bar.
-	best, meetsTarget := confidence.Recommend(summary.Calibration)
+	best, meetsTarget := confidence.Recommend(lane.Calibration)
 	if best.Kept == 0 {
 		fmt.Printf("   recommended  none - no detection was kept at any threshold\n")
 		return
