@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Window } from '@wailsio/runtime';
 import { App } from '../../../bindings/zopresent';
-import type { EngineOption, ShortcutsView, StorageView } from '../../../bindings/zopresent/models';
+import type { DetectionTypeStates, EngineOption, ShortcutsView, StorageView } from '../../../bindings/zopresent/models';
 import { Icon } from '../../components/Icon';
 import { formatBytes, formatDateTime } from '../../lib/format';
 import { DEFAULT_SHORTCUTS, SHORTCUT_ACTIONS, comboFromEvent, formatCombo, isBindable } from '../../lib/shortcuts';
@@ -16,6 +16,16 @@ function errorMessage(error: unknown): string {
 
 // Select value for a spec typed by hand rather than discovered on disk.
 const CUSTOM_ENGINE = '__custom';
+
+// The detection types the operator can enable, named by the method constant the
+// backend switches on. Multiple references ride the explicit lane, so they are
+// described under it rather than given a switch of their own.
+const DETECTION_TYPES: { method: string; key: keyof DetectionTypeStates; label: string; hint: string }[] = [
+  { method: 'explicit-reference', key: 'explicit', label: 'Explicit references', hint: 'A passage named outright — "turn to Romans 8:28". Several in one breath queue as separate cards.' },
+  { method: 'contextual-reference', key: 'contextual', label: 'Contextual references', hint: 'A bare "verse 29" resolved against the passage already on the wall.' },
+  { method: 'spoken-quote', key: 'quote', label: 'Quotation matches', hint: 'Scripture quoted word for word without naming it, matched against the translation.' },
+  { method: 'reference-correction', key: 'correction', label: 'Reference corrections', hint: '"No wait, I mean verse 29" replaces the earlier card instead of stacking beside it.' },
+];
 
 // The window is tall, so each group gets its own tab instead of stacking every
 // card into one long scroll.
@@ -43,6 +53,7 @@ export function SettingsWindow() {
   const [engines, setEngines] = useState<EngineOption[]>([]);
   const [customEngine, setCustomEngine] = useState(false);
   const [detectionDisabled, setDetectionDisabled] = useState(false);
+  const [detectionTypes, setDetectionTypes] = useState<DetectionTypeStates>({ explicit: true, contextual: false, quote: false, correction: false });
   const [engineSaved, setEngineSaved] = useState(false);
   // Restore arms per backup name; a second click on the armed row confirms.
   const [restoreArm, setRestoreArm] = useState<string | null>(null);
@@ -78,6 +89,7 @@ export function SettingsWindow() {
         setEngineSpec(config.engineSpec);
         setEngineDraft(config.engineSpec);
         setDetectionDisabled(config.disabled);
+        setDetectionTypes(config.types);
       })
       .catch(() => {
         // Without the bridge the detection card simply shows its empty state.
@@ -248,6 +260,19 @@ export function SettingsWindow() {
       const next = !detectionDisabled;
       await App.SetDetectionDisabled(next);
       setDetectionDisabled(next);
+    } catch (error: unknown) {
+      setProblem(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleDetectionType(method: string, key: keyof DetectionTypeStates, enabled: boolean) {
+    setBusy(true);
+    setProblem(null);
+    try {
+      await App.SetDetectionTypeEnabled(method, enabled);
+      setDetectionTypes((current) => ({ ...current, [key]: enabled }));
     } catch (error: unknown) {
       setProblem(errorMessage(error));
     } finally {
@@ -476,6 +501,38 @@ export function SettingsWindow() {
             Moonshine ships with the app. The engine runs offline; only the
             download above touches the network.
           </p>
+          <div className={SECTION}>
+            <h3>Detection types</h3>
+            <p className="text-[#6F809B] text-[10.5px] leading-[1.6]">
+              Each type stays off until you have calibrated it on your own labeled
+              audio — the benchmark harness prints a recommendation per type. Turn
+              one on once it clears the precision bar in your room.
+            </p>
+            <ul className="m-0 p-0 list-none grid gap-px">
+              {DETECTION_TYPES.map((type) => {
+                const enabled = detectionTypes[type.key];
+                return (
+                  <li key={type.method} className="flex items-center justify-between gap-3 px-2 py-[7px] rounded-md hover:bg-elevated">
+                    <div className="min-w-0">
+                      <span className="block text-[11.5px] font-medium">{type.label}</span>
+                      <span className="block text-[#6F809B] text-[10px] leading-[1.5] mt-px">{type.hint}</span>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={enabled}
+                      aria-label={type.label}
+                      disabled={busy}
+                      onClick={() => void toggleDetectionType(type.method, type.key, !enabled)}
+                      className={`relative flex items-center w-[30px] h-4 rounded-full shrink-0 disabled:opacity-50 ${enabled ? 'bg-[#6EE7C0]' : 'bg-[#2A3950]'}`}
+                    >
+                      <span className={`w-3 h-3 rounded-full ml-0.5 transition-transform ${enabled ? 'bg-app translate-x-[14px]' : 'bg-secondary'}`} />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         </section>
 
         <section className={pane('shortcuts')} aria-labelledby="settings-shortcuts-title">

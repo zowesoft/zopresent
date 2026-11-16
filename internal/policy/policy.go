@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"zopresent/internal/confidence"
+	"zopresent/internal/detection"
 )
 
 // Gate IDs are stable: tests name them, and the panel can explain which one
@@ -17,6 +18,7 @@ const (
 	GateUnambiguous = "unambiguous"
 	GatePassage     = "passage"
 	GateIntent      = "intent"
+	GateType        = "type"
 	GateConflict    = "conflict"
 	GateRepeat      = "repeat"
 	GateEnabled     = "enabled"
@@ -52,6 +54,11 @@ type Request struct {
 	// Explicit reports a spoken explicit reference rather than a contextual or
 	// quotation match.
 	Explicit bool
+	// Method names the detection type that produced the card, and TypeEnabled
+	// is that type's switch: a type the operator has not cleared on labeled
+	// audio never reaches the room on its own.
+	Method      string
+	TypeEnabled bool
 	// BookID and Chapter must resolve and VerseScoped must hold: a whole
 	// chapter is too broad to put on the wall unasked.
 	BookID      int
@@ -86,6 +93,7 @@ func Evaluate(request Request) Verdict {
 		{GateUnambiguous, "The reference is unambiguous", unambiguousCause(request), request.BookID > 0 && request.Chapter > 0 && request.VerseScoped},
 		{GatePassage, "The passage exists in the selected translation", "the passage was not found in the selected translation", request.PassageAvailable},
 		{GateIntent, "An explicit scripture reference was spoken", "this is a quotation or a contextual match, not a spoken reference", request.Explicit},
+		{GateType, "This detection type is enabled", typeCause(request), request.TypeEnabled},
 		{GateConflict, "No conflicting candidate supersedes it", conflictCause(request), request.SettledInSegment == 1},
 		{GateRepeat, "The hearing is not a repeat", "the same reference was heard again, so the hearings were folded into one card", request.Repeats == 0},
 		{GateEnabled, "Auto-projection is on and not paused", enabledCause(request), request.Enabled && !request.Paused && !request.Disabled},
@@ -139,4 +147,21 @@ func enabledCause(request Request) string {
 	default:
 		return "the auto-projection switch is off"
 	}
+}
+
+// typeCause names the detection type whose switch is off, so the operator knows
+// which one to calibrate and enable rather than guessing at "a type".
+func typeCause(request Request) string {
+	label := "this detection type"
+	switch request.Method {
+	case detection.MethodExplicitReference:
+		label = "explicit reference"
+	case detection.MethodContextualReference:
+		label = "contextual reference"
+	case detection.MethodSpokenQuote:
+		label = "quotation"
+	case detection.MethodReferenceCorrection:
+		label = "reference correction"
+	}
+	return "the " + label + " detection type is switched off"
 }

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"zopresent/internal/bible"
+	"zopresent/internal/detection"
 	"zopresent/internal/policy"
 )
 
@@ -34,6 +35,7 @@ func contextualCandidateOf(t *testing.T, app *App) (bool, string) {
 func TestSettleSegmentQueuesButNeverAutoProjectsContextualVerse(t *testing.T) {
 	app := newTestApp(t)
 	installTestBible(t, app)
+	enableDetectionTypes(t, app, detection.MethodContextualReference)
 	if err := app.SetAutoProjection(true); err != nil {
 		t.Fatalf("enable auto-projection: %v", err)
 	}
@@ -61,6 +63,7 @@ func TestSettleSegmentQueuesButNeverAutoProjectsContextualVerse(t *testing.T) {
 func TestSettleSegmentKeepsContextualVerseOffAutoProjectionEvenAtHighConfidence(t *testing.T) {
 	app := newTestApp(t)
 	installTestBible(t, app)
+	enableDetectionTypes(t, app, detection.MethodContextualReference)
 	if err := app.SetAutoProjection(true); err != nil {
 		t.Fatalf("enable auto-projection: %v", err)
 	}
@@ -99,6 +102,7 @@ func TestSettleSegmentKeepsContextualVerseOffAutoProjectionEvenAtHighConfidence(
 func TestSettleSegmentDoesNothingWithoutAnEstablishedPassage(t *testing.T) {
 	app := newTestApp(t)
 	installTestBible(t, app)
+	enableDetectionTypes(t, app, detection.MethodContextualReference)
 
 	result, err := app.settleSegment("now read verse sixteen")
 	if err != nil {
@@ -114,6 +118,7 @@ func TestSettleSegmentDoesNothingWithoutAnEstablishedPassage(t *testing.T) {
 func TestSettleSegmentDropsVerseThatDoesNotExistInTheChapter(t *testing.T) {
 	app := newTestApp(t)
 	installTestBible(t, app)
+	enableDetectionTypes(t, app, detection.MethodContextualReference)
 	job29OnTheWall(t, app)
 
 	if _, err := app.settleSegment("now read verse one hundred and seventy six"); err != nil {
@@ -128,6 +133,7 @@ func TestSettleSegmentDropsVerseThatDoesNotExistInTheChapter(t *testing.T) {
 func TestSettleSegmentExplicitReferenceSupersedesTheContextualHint(t *testing.T) {
 	app := newTestApp(t)
 	installTestBible(t, app)
+	enableDetectionTypes(t, app, detection.MethodContextualReference)
 	job29OnTheWall(t, app)
 
 	// The preacher names the verse outright: the explicit card is the only

@@ -611,6 +611,15 @@ export function SetDetectionEngine(spec: string): $CancellablePromise<void> {
 }
 
 /**
+ * SetDetectionTypeEnabled turns one detection type on or off, named by its
+ * method constant. A disabled type produces no candidates at all; the explicit
+ * lane also carries multiple references, so they follow its switch.
+ */
+export function SetDetectionTypeEnabled(method: string, enabled: boolean): $CancellablePromise<void> {
+    return $Call.ByID(1061047767, method, enabled);
+}
+
+/**
  * SetItemTheme points one schedule item at a theme, or back at its kind default
  * with an empty id. The theme is checked before it is stored so a pick that has
  * since been deleted cannot be saved quietly, and the change only reaches the

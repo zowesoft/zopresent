@@ -39,6 +39,7 @@ const unnamedPhilippiansQuote = "be careful for nothing but in every thing by pr
 func TestSpokenQuoteQueuesAnUnnamedPassage(t *testing.T) {
 	app := newTestApp(t)
 	installQuoteBible(t, app)
+	enableDetectionTypes(t, app, detection.MethodSpokenQuote)
 
 	result := runSegment(t, app, unnamedPhilippiansQuote)
 
@@ -76,6 +77,7 @@ func TestSpokenQuoteQueuesAnUnnamedPassage(t *testing.T) {
 func TestSpokenQuoteIsHeldBackWhenAutoProjectionIsArmed(t *testing.T) {
 	app := newTestApp(t)
 	installQuoteBible(t, app)
+	enableDetectionTypes(t, app, detection.MethodSpokenQuote)
 	if err := app.SetAutoProjection(true); err != nil {
 		t.Fatalf("enable auto-projection: %v", err)
 	}
@@ -124,6 +126,7 @@ func TestSpokenQuoteIsHeldBackWhenAutoProjectionIsArmed(t *testing.T) {
 func TestExplicitReferenceSuppressesTheSpokenQuote(t *testing.T) {
 	app := newTestApp(t)
 	installQuoteBible(t, app)
+	enableDetectionTypes(t, app, detection.MethodSpokenQuote)
 
 	transcript := "but listen to what the Bible says in Philippians 4 verses 6 and 7 " +
 		"be careful for nothing but in every thing by prayer and supplication with thanksgiving " +

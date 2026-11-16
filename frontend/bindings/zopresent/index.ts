@@ -21,6 +21,7 @@ export type {
     DetectionConfigView,
     DetectionHistoryView,
     DetectionResult,
+    DetectionTypeStates,
     DetectionView,
     DisplayView,
     EditSongRequest,

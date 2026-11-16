@@ -132,6 +132,12 @@ export interface DetectionConfigView {
      */
     "autoProjection": boolean;
     "autoProjectionPaused": boolean;
+
+    /**
+     * Types reports each detection type's switch so the panel can show what is
+     * listening for and the settings window can render the toggles.
+     */
+    "types": DetectionTypeStates;
 }
 
 /**
@@ -169,6 +175,18 @@ export interface DetectionResult {
      * operator, so the panel can say so instead of the card vanishing.
      */
     "autoProjected": string[] | null;
+}
+
+/**
+ * DetectionTypeStates is the per-type enablement the operator controls. Explicit
+ * references ship enabled; the rest stay off until calibrated and turned on.
+ * Multiple references are part of the explicit lane and follow its switch.
+ */
+export interface DetectionTypeStates {
+    "explicit": boolean;
+    "contextual": boolean;
+    "quote": boolean;
+    "correction": boolean;
 }
 
 /**

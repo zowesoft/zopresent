@@ -34,6 +34,9 @@ type DetectionValue = {
   // backend policy state; the panel never decides a gate itself.
   autoProjection: boolean;
   autoProjectionPaused: boolean;
+  // Each detection type's switch. Explicit ships on; the rest stay off until
+  // the operator calibrates and enables them in Settings.
+  types: models.DetectionTypeStates;
   // References the safety gates projected during the last analysis.
   autoProjected: string[];
   // Continuous listening closes a segment when the speaker pauses instead of
@@ -45,6 +48,7 @@ type DetectionValue = {
   setDevice: (deviceID: string) => void;
   setAutoProjection: (enabled: boolean) => Promise<void>;
   toggleAutoProjectionPause: () => Promise<void>;
+  setDetectionType: (method: string, enabled: boolean) => Promise<void>;
   toggleListening: () => Promise<void>;
   analyze: () => Promise<void>;
   analyzeFile: (file: File) => Promise<void>;
@@ -79,6 +83,7 @@ export function DetectionProvider({ children }: { children: ReactNode }) {
   const [repeats, setRepeats] = useState(0);
   const [autoProjection, setAutoProjectionState] = useState(false);
   const [autoProjectionPaused, setAutoProjectionPausedState] = useState(true);
+  const [types, setTypes] = useState<models.DetectionTypeStates>({ explicit: true, contextual: false, quote: false, correction: false });
   const [autoProjected, setAutoProjected] = useState<string[]>([]);
   const [continuous, setContinuous] = useState(true);
   const [segmenting, setSegmenting] = useState(false);
@@ -111,6 +116,7 @@ export function DetectionProvider({ children }: { children: ReactNode }) {
       setEngineConfigured(config.engineSpec !== '');
       setAutoProjectionState(config.autoProjection);
       setAutoProjectionPausedState(config.autoProjectionPaused);
+      setTypes(config.types);
     } catch {
       // Without the bridge the panel stays in its offline state.
     }
@@ -362,6 +368,11 @@ export function DetectionProvider({ children }: { children: ReactNode }) {
     await refreshConfig();
   }, [autoProjectionPaused, refreshConfig]);
 
+  const setDetectionType = useCallback(async (method: string, enabled: boolean) => {
+    await App.SetDetectionTypeEnabled(method, enabled);
+    await refreshConfig();
+  }, [refreshConfig]);
+
   const approve = useCallback(async (id: string) => {
     // Approval previews through the studio; sending it live stays a separate
     // operator action.
@@ -406,6 +417,7 @@ export function DetectionProvider({ children }: { children: ReactNode }) {
     repeats,
     autoProjection,
     autoProjectionPaused,
+    types,
     autoProjected,
     continuous,
     segmenting,
@@ -414,6 +426,7 @@ export function DetectionProvider({ children }: { children: ReactNode }) {
     setDevice: setDeviceId,
     setAutoProjection: setAutoProjectionEnabled,
     toggleAutoProjectionPause,
+    setDetectionType,
     toggleListening,
     analyze,
     analyzeFile,
@@ -426,9 +439,9 @@ export function DetectionProvider({ children }: { children: ReactNode }) {
     },
   }), [
     listening, devices, deviceId, level, transcript, candidates, history, analyzing, disabled,
-    engineConfigured, bufferedSeconds, segment, repeats, autoProjection, autoProjectionPaused, autoProjected,
+    engineConfigured, bufferedSeconds, segment, repeats, autoProjection, autoProjectionPaused, types, autoProjected,
     continuous, segmenting, lastError, toggleContinuous, analyzeSegment,
-    setAutoProjectionEnabled, toggleAutoProjectionPause, toggleListening, analyze, analyzeFile, approve, project, dismiss, clear,
+    setAutoProjectionEnabled, toggleAutoProjectionPause, setDetectionType, toggleListening, analyze, analyzeFile, approve, project, dismiss, clear,
     refreshConfig, refreshQueue, refreshHistory,
   ]);
 

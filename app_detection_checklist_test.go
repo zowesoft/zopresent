@@ -40,8 +40,8 @@ func TestHeldBackCandidateCarriesTheGateChecklist(t *testing.T) {
 	if card.AutoProjection.Reason == "" {
 		t.Error("checklist has no reason")
 	}
-	if len(card.AutoProjection.Gates) != 8 {
-		t.Fatalf("gates = %d, want the eight PRD gates", len(card.AutoProjection.Gates))
+	if len(card.AutoProjection.Gates) != 9 {
+		t.Fatalf("gates = %d, want the eight PRD gates plus the per-type switch", len(card.AutoProjection.Gates))
 	}
 
 	confidenceGate := gate(card, "confidence")

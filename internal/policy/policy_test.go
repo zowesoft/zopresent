@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"zopresent/internal/confidence"
+	"zopresent/internal/detection"
 )
 
 // passing is the one candidate shape every gate accepts, so each test below can
@@ -14,6 +15,8 @@ func passing() Request {
 		Enabled:          true,
 		Finalized:        true,
 		Explicit:         true,
+		Method:           detection.MethodExplicitReference,
+		TypeEnabled:      true,
 		BookID:           43,
 		Chapter:          3,
 		VerseScoped:      true,
@@ -28,8 +31,8 @@ func TestEvaluatePassesWhenEveryGateHolds(t *testing.T) {
 	if !verdict.Project {
 		t.Fatalf("blocked by %v (%s), want projection", verdict.Failed, verdict.Reason)
 	}
-	if len(verdict.Gates) != 8 {
-		t.Fatalf("gates = %d, want the eight PRD gates", len(verdict.Gates))
+	if len(verdict.Gates) != 9 {
+		t.Fatalf("gates = %d, want the eight PRD gates plus the per-type switch", len(verdict.Gates))
 	}
 	if verdict.Reason != "" {
 		t.Errorf("reason = %q, want empty when everything passed", verdict.Reason)
@@ -47,6 +50,7 @@ func TestEachGateBlocksOnItsOwn(t *testing.T) {
 		{"unknown book", GateUnambiguous, func(r *Request) { r.BookID = 0 }},
 		{"missing passage", GatePassage, func(r *Request) { r.PassageAvailable = false }},
 		{"quotation", GateIntent, func(r *Request) { r.Explicit = false }},
+		{"type switched off", GateType, func(r *Request) { r.TypeEnabled = false }},
 		{"two candidates", GateConflict, func(r *Request) { r.SettledInSegment = 2 }},
 		{"repeated hearing", GateRepeat, func(r *Request) { r.Repeats = 1 }},
 		{"switched off", GateEnabled, func(r *Request) { r.Enabled = false }},
@@ -102,6 +106,7 @@ func TestReasonSaysWhatWentWrongRatherThanWhatWasRequired(t *testing.T) {
 		{"unknown chapter", func(r *Request) { r.Chapter = 0 }, "the chapter could not be resolved"},
 		{"missing passage", func(r *Request) { r.PassageAvailable = false }, "the passage was not found"},
 		{"quotation", func(r *Request) { r.Explicit = false }, "quotation or a contextual match"},
+		{"type switched off", func(r *Request) { r.TypeEnabled = false }, "detection type is switched off"},
 		{"two candidates", func(r *Request) { r.SettledInSegment = 2 }, "2 references were heard"},
 		{"repeated hearing", func(r *Request) { r.Repeats = 1 }, "heard again"},
 		{"switched off", func(r *Request) { r.Enabled = false }, "the auto-projection switch is off"},
@@ -139,5 +144,28 @@ func TestConflictReasonCountsTheCompetingReferences(t *testing.T) {
 	}
 	if !strings.Contains(verdict.Reason, "choose which one to send") {
 		t.Fatalf("reason = %q, want it to say what to do about it", verdict.Reason)
+	}
+}
+
+// The type gate's refusal names the type, so the operator knows which switch to
+// calibrate and turn on rather than hunting through settings.
+func TestTypeGateReasonNamesTheDetectionType(t *testing.T) {
+	cases := []struct {
+		method string
+		want   string
+	}{
+		{detection.MethodExplicitReference, "explicit reference"},
+		{detection.MethodContextualReference, "contextual reference"},
+		{detection.MethodSpokenQuote, "quotation"},
+		{detection.MethodReferenceCorrection, "reference correction"},
+	}
+	for _, tc := range cases {
+		request := passing()
+		request.Method = tc.method
+		request.TypeEnabled = false
+		verdict := Evaluate(request)
+		if !strings.Contains(verdict.Reason, tc.want) {
+			t.Errorf("method %q: reason = %q, want it to name %q", tc.method, verdict.Reason, tc.want)
+		}
 	}
 }

@@ -480,13 +480,13 @@ slab from the transcript controls and from Settings alike while call-site
 utilities still win.
 
 Auto-projection runs through `internal/policy`, the only code allowed to send a
-detection to the display (`app_detection.go` `autoProject`). The PRD's eight
-safety gates are named checks — finalized segment, unambiguous reference,
-passage exists in the selected translation, explicit intent, no competing
-candidate, not a repeat, switched on and not paused, high confidence — and a
-failing gate leaves the card in the operator's queue with the live slide
-untouched. The switch is off by default and every start boots paused, so
-nothing projects before the operator arms it; F9 pauses and resumes without
+detection to the display (`app_detection.go` `autoProject`). The PRD's safety
+gates are named checks — finalized segment, unambiguous reference, passage
+exists in the selected translation, explicit intent, the detection type enabled,
+no competing candidate, not a repeat, switched on and not paused, high
+confidence — and a failing gate leaves the card in the operator's queue with the
+live slide untouched. The switch is off by default and every start boots paused,
+so nothing projects before the operator arms it; F9 pauses and resumes without
 stopping audio capture, a successful automatic projection is recorded as
 `auto_projected` in `detection_history`, and the panel names what went to the
 room instead of the card silently vanishing. A card the gates hold back carries
@@ -591,9 +591,10 @@ cards rather than stopping the explicit path (`internal/detection/quote.go`,
 `app_detection_quote_test.go`).
 
 Still open (later slices): moving the confidence edges onto real recorded
-services (the sweep is in `cmd/asr-bench`, which needs those recordings). The
-capture service now lives in `internal/audio` (see the Phase 2 row). The
-shipped engine is
+services — the per-lane sweep is in `cmd/asr-bench`, which needs those
+recordings, and the contextual/quotation/correction switches stay off until a
+set clears the precision bar. The capture service now lives in `internal/audio`
+(see the Phase 2 row). The shipped engine is
 Moonshine (`internal/speech`, below); Whisper works only from a hand-typed spec
 and has no model lifecycle of its own.
 
@@ -640,6 +641,20 @@ PRD's 99% projection bar. A lane uses the confidence the app would really show
 for explicit phrasings), so the sweep describes production bands rather than a
 benchmark copy, and a type can be cleared on real labeled audio before it is
 enabled (`cmd/asr-bench/main.go`, `benchmarks/README.md`).
+
+Each type also has its own **enablement switch** (`settings.KeyDetectionType*`):
+explicit references ship enabled as the reliable baseline, while contextual,
+quotation and correction stay off until the operator calibrates them on labeled
+audio and turns them on. A disabled type produces no candidates at all — the
+generation paths (`detectContextual`, `detectQuotes`, the correction tagging)
+read the switch — and `internal/policy` weighs it again as the `type` gate, so a
+card queued by any means whose type is off never reaches the room even with every
+other gate passing. `App.SetDetectionTypeEnabled` writes the switch,
+`GetDetectionConfig` reports all four in `Types`, the Settings → Detection card
+renders a toggle per type with the calibration note, and the Production card
+lists what is currently being listened for. Multiple references follow the
+explicit switch (`app_detection.go`, `internal/settings/detection.go`,
+`internal/policy/policy.go`, `app_detection_types_test.go`).
 
 ### Engine provisioning (F07 slice — landed)
 
@@ -945,9 +960,13 @@ The tracker understated the app, which is why this audit was needed:
    ends of the queue. `lib/shortcuts.ts` gained `QUEUE_SHORTCUTS` — the keys
    the panel uses, exported so the hint line shows what the queue actually
    implements instead of a hand-maintained string.
-7. **Further detection types (M each, sequential).** Contextual → quotation →
-   correction → multi-reference. Each type stays disabled until it clears the
-   precision target on labeled audio.
+7. **Further detection types (M each, sequential) — landed.** Contextual →
+   quotation → correction → multi-reference are all in: correction supersedes a
+   recent same-book card, multiple references keep separate cards under the
+   conflict gate, and `cmd/asr-bench` scores each type as its own calibration
+   lane. Each type has its own enablement switch and stays disabled until it
+   clears the precision target on labeled audio (explicit ships enabled as the
+   baseline; the `type` policy gate enforces the switch on the way to the room).
 
 ### Phase 2 — Reliability and evidence (parallel to Phase 1)
 
@@ -1032,7 +1051,6 @@ All three are gated on external input, which is why they come last:
 
 ### Decisions needed before their phase
 
-- Per-type enablement for auto-projection (the switch defaults off and boots paused).
 - Whisper vs Moonshine as the V1 engine — it changes the model-lifecycle work
   (before 1.5).
 - Whether Live Detection stays a persistent panel or becomes a page (before 1.6).

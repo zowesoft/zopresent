@@ -1312,6 +1312,15 @@ function ProductionCard() {
             ? 'Only high-confidence explicit references that pass every safety gate are projected; everything else waits for you.'
             : 'Every detection waits in the queue for you to approve.'}
         </p>
+        <p className="text-secondary text-[9.5px] leading-[1.5]">
+          Listening for:{' '}
+          {[
+            detection.types.explicit && 'explicit references',
+            detection.types.contextual && 'contextual verses',
+            detection.types.quote && 'quotations',
+            detection.types.correction && 'corrections',
+          ].filter(Boolean).join(' · ') || 'nothing — enable a type in Settings'}
+        </p>
       </div>
     </section>
   );

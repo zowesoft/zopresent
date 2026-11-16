@@ -112,6 +112,19 @@ type DetectionConfigView struct {
 	// the F9 pause. They are separate so the panel can say "Hybrid" or "Paused".
 	AutoProjection       bool `json:"autoProjection"`
 	AutoProjectionPaused bool `json:"autoProjectionPaused"`
+	// Types reports each detection type's switch so the panel can show what is
+	// listening for and the settings window can render the toggles.
+	Types DetectionTypeStates `json:"types"`
+}
+
+// DetectionTypeStates is the per-type enablement the operator controls. Explicit
+// references ship enabled; the rest stay off until calibrated and turned on.
+// Multiple references are part of the explicit lane and follow its switch.
+type DetectionTypeStates struct {
+	Explicit   bool `json:"explicit"`
+	Contextual bool `json:"contextual"`
+	Quote      bool `json:"quote"`
+	Correction bool `json:"correction"`
 }
 
 // DetectScripture queues what the detector finds; nothing is projected until
@@ -197,6 +210,18 @@ func (a *App) settleSegment(transcript string) (DetectionResult, error) {
 		return DetectionResult{}, errStorageUnavailable
 	}
 	explicit := asr.DetectReferences(transcript)
+	if !a.detectionTypeEnabled(a.context(), detection.MethodExplicitReference) {
+		explicit = nil
+	}
+	// A speaker taking back a reference ("no wait, it's Romans 8:29") tags that
+	// hearing as a correction, so the queue supersedes the prior card instead of
+	// stacking a second passage beside it. The type ships off until it is
+	// calibrated, so an unenabled correction reads as an ordinary reference.
+	if a.detectionTypeEnabled(a.context(), detection.MethodReferenceCorrection) && asr.HasCorrectionCue(transcript) {
+		for i := range explicit {
+			explicit[i].Method = detection.MethodReferenceCorrection
+		}
+	}
 	detections := append(explicit, a.detectContextual(transcript, explicit)...)
 	detections = append(detections, a.detectQuotes(transcript, explicit)...)
 	settled, err := a.detection.Finalize(transcript, detections, a.currentServiceID(a.context()))
@@ -226,6 +251,9 @@ func (a *App) detectQuotes(transcript string, explicit []asr.Detection) []asr.De
 	if a.bible == nil || a.settings == nil || strings.TrimSpace(transcript) == "" {
 		return nil
 	}
+	if !a.detectionTypeEnabled(a.context(), detection.MethodSpokenQuote) {
+		return nil
+	}
 	ctx := a.context()
 	translation := a.settings.GetDefault(ctx, settings.KeyDefaultTranslation, "kjv")
 	matches, err := a.bible.MatchQuote(ctx, translation, transcript, quoteMatchLimit)
@@ -247,6 +275,9 @@ func (a *App) detectQuotes(transcript string, explicit []asr.Detection) []asr.De
 // the policy intent gate requires it.
 func (a *App) detectContextual(transcript string, explicit []asr.Detection) []asr.Detection {
 	if a.bible == nil || a.settings == nil || strings.TrimSpace(transcript) == "" {
+		return nil
+	}
+	if !a.detectionTypeEnabled(a.context(), detection.MethodContextualReference) {
 		return nil
 	}
 	state := a.presentation.State()
@@ -276,6 +307,9 @@ func (a *App) streamDetectionProgress(base, partial string) {
 		return
 	}
 	explicit := asr.DetectReferences(partial)
+	if !a.detectionTypeEnabled(a.context(), detection.MethodExplicitReference) {
+		explicit = nil
+	}
 	detections := append(explicit, a.detectContextual(partial, explicit)...)
 	if _, err := a.detection.MergeLive(partial, detections, a.currentServiceID(a.context())); err != nil {
 		return
@@ -499,6 +533,12 @@ func (a *App) GetDetectionConfig() (DetectionConfigView, error) {
 		Disabled:             a.detectionDisabled(),
 		AutoProjection:       a.autoProjectionEnabled(ctx),
 		AutoProjectionPaused: a.autoProjectionPaused(ctx),
+		Types: DetectionTypeStates{
+			Explicit:   a.detectionTypeEnabled(ctx, detection.MethodExplicitReference),
+			Contextual: a.detectionTypeEnabled(ctx, detection.MethodContextualReference),
+			Quote:      a.detectionTypeEnabled(ctx, detection.MethodSpokenQuote),
+			Correction: a.detectionTypeEnabled(ctx, detection.MethodReferenceCorrection),
+		},
 	}, nil
 }
 
@@ -595,6 +635,51 @@ func (a *App) autoProjectionPaused(ctx context.Context) bool {
 	return a.settings.GetDefault(ctx, settings.KeyAutoProjectionPaused, "true") == "true"
 }
 
+// detectionTypeKeys maps each detection method to its settings switch. An
+// unknown method rides the explicit lane, the baseline the app ships enabled.
+var detectionTypeKeys = map[string]string{
+	detection.MethodExplicitReference:   settings.KeyDetectionTypeExplicit,
+	detection.MethodContextualReference: settings.KeyDetectionTypeContextual,
+	detection.MethodSpokenQuote:         settings.KeyDetectionTypeQuote,
+	detection.MethodReferenceCorrection: settings.KeyDetectionTypeCorrection,
+}
+
+// detectionTypeEnabled reads one type's switch. Explicit references default on;
+// every other type defaults off until the operator calibrates it on labeled
+// audio and turns it on, so an uncalibrated type never queues or projects.
+func (a *App) detectionTypeEnabled(ctx context.Context, method string) bool {
+	key, ok := detectionTypeKeys[method]
+	if !ok {
+		key = settings.KeyDetectionTypeExplicit
+	}
+	fallback := "false"
+	if key == settings.KeyDetectionTypeExplicit {
+		fallback = "true"
+	}
+	if a.settings == nil {
+		return fallback == "true"
+	}
+	return a.settings.GetDefault(ctx, key, fallback) == "true"
+}
+
+// SetDetectionTypeEnabled turns one detection type on or off, named by its
+// method constant. A disabled type produces no candidates at all; the explicit
+// lane also carries multiple references, so they follow its switch.
+func (a *App) SetDetectionTypeEnabled(method string, enabled bool) error {
+	if a.settings == nil {
+		return errStorageUnavailable
+	}
+	key, ok := detectionTypeKeys[method]
+	if !ok {
+		return fmt.Errorf("unknown detection type %q", method)
+	}
+	if err := a.settings.Set(a.context(), key, boolSetting(enabled)); err != nil {
+		return err
+	}
+	a.notifyDetectionConfig()
+	return nil
+}
+
 // autoProject weighs each card one segment settled against the PRD safety
 // checklist. It is the only path from a detection to the display: a blocked
 // card stays queued for the operator, and a controller failure leaves the live
@@ -644,6 +729,8 @@ func (a *App) autoProjectionVerdict(ctx context.Context, candidate detection.Can
 		Disabled:         a.detectionDisabled(),
 		Finalized:        candidate.Finalized,
 		Explicit:         candidate.Method == detection.MethodExplicitReference,
+		Method:           candidate.Method,
+		TypeEnabled:      a.detectionTypeEnabled(ctx, candidate.Method),
 		BookID:           reference.Book.ID,
 		Chapter:          reference.Chapter,
 		VerseScoped:      reference.VerseStart > 0,

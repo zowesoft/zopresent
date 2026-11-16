@@ -55,6 +55,18 @@ func installTestBible(t *testing.T, app *App) {
 	}
 }
 
+// enableDetectionTypes turns on the named detection types, which ship off until
+// calibrated. A test exercising one of those paths enables it first, the same
+// way an operator would after running the benchmark on their own audio.
+func enableDetectionTypes(t *testing.T, app *App, methods ...string) {
+	t.Helper()
+	for _, method := range methods {
+		if err := app.SetDetectionTypeEnabled(method, true); err != nil {
+			t.Fatalf("enable detection type %q: %v", method, err)
+		}
+	}
+}
+
 func TestStartupStoresRuntimeContext(t *testing.T) {
 	app := newAppAt(t.TempDir())
 	ctx, cancel := context.WithCancel(context.Background())
