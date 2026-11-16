@@ -49,7 +49,7 @@ real text* on a machine without that env var.
 | F05 | Media library and playback | **Partial** | `internal/media`, `app_media.go`, `frontend/src/features/media` |
 | F06 | Custom theme editor | **Done** | `internal/themes`, `app_themes.go`, `frontend/src/features/themes`, `frontend/src/components/ThemedSlide.tsx` |
 | F07 | Offline AI scripture detection | **Partial** | `internal/asr`, `internal/detection`, `app_detection.go`, `frontend/src/features/detection`; `cmd/asr-bench` + `benchmarks/` groundwork |
-| F08 | Semantic scripture and song search | **Planned** | `internal/search` (empty); no model/index work |
+| F08 | Semantic scripture and song search | **Planned** | model benchmark done (`cmd/search-bench`, `benchmarks/search-set`); `internal/search` still empty |
 | F09 | Online lyrics discovery (Genius) | **Planned** | no package, no UI |
 | F10 | EasyWorship migration | **Planned** | no package, no UI |
 
@@ -812,9 +812,55 @@ list still renders from the embedded texts, with the file link absent.
 
 ## F08 — Semantic scripture and song search (Planned)
 
-`internal/search` is empty. No embedding model, no versioned index, no
-`search_embeddings` migration. Prerequisite: benchmark a local model on the
-Windows baseline before selecting it.
+The model-selection benchmark is done; the feature itself is not built.
+`internal/search` is still empty and there is no `search_embeddings` migration.
+
+Done (benchmark slice):
+- [x] `cmd/search-bench` — pure-Go harness (CGO_ENABLED=0) that scores the
+      production FTS path and any local embedding model side by side. Embeddings
+      run through a llama.cpp `llama-server` sidecar over loopback HTTP with
+      prebuilt CPU binaries (Windows/macOS/Linux), so no CGO enters the app.
+      Engine specs follow the ASR harness convention
+      (`-engine "name=bin args {port}"`, plus `query-prefix=`/`doc-prefix=`
+      tokens); ranking is exact brute-force cosine over the whole corpus.
+- [x] `benchmarks/search-set/manifest.json` — 37 queries against KJV
+      (31,102 verses) and the 7-doc demo song library: 22 semantic paraphrases
+      (1.9% content-word overlap with gold, so they measure meaning, not
+      keywords), 6 keyword queries, 3 traps (famous non-verses and an unrelated
+      sentence), 2 filtered queries (testament / book), 6 song queries.
+- [x] `benchmarks/fetch.ps1` downloads the llama.cpp release into its own
+      `tools/llama-b12436/` directory (its ggml DLLs must not overwrite the
+      whisper build's) plus three Q8_0 GGUF models: all-MiniLM-L6-v2 (24 MB),
+      bge-small-en-v1.5 (35 MB), nomic-embed-text-v1.5 (146 MB).
+- [x] Windows baseline measured on the PRD limited-spec machine (i5-4300U,
+      8 GB, app running alongside). Full numbers and per-query detail in
+      `benchmarks/README.md` and `benchmarks/search-report.json`:
+
+      | Lane | Semantic @10 | Keyword @10 | Songs | Query p95 | Cold index | Peak RSS |
+      | --- | --- | --- | --- | --- | --- | --- |
+      | FTS (production) | 0/22 | 6/6 (~3 ms) | 2/6 (keywords only) | 544 ms | — | — |
+      | MiniLM Q8 | 5/22 | 2/6 | 6/6 rank 1 | 78 ms | ~21 min | 32–36 MB |
+      | bge-small Q8 | 4/22 | 6/6 | 6/6 rank 1 | 199 ms | ~46 min | 44–48 MB |
+      | nomic Q8 | not scored | — | — | — | ~4 h (extrapolated) | 168 MB at 16% |
+
+- [x] Recommendation recorded: **all-MiniLM-L6-v2 (Q8_0), strictly hybrid with
+      FTS** — FTS keeps keywords (perfect recall at ~3 ms; MiniLM regresses
+      there), MiniLM adds the semantic lane inside the 150 ms query budget at
+      half of bge's index time and footprint. bge is the runner-up; nomic is
+      disqualified on per-install cost (~4 h first index, 91 MB vectors,
+      168 MB RSS on the baseline machine).
+
+Still open (the feature build, gated on this benchmark which is now cleared):
+- `internal/search`, the versioned index / `search_embeddings` migration,
+  sidecar packaging beside the app, and the search-box UI wiring.
+- The query set is a hard lower bound (n=22 semantic); grow it with real
+  operator queries before judging production recall.
+- Adjacent-verse misses (e.g. John 3:18 outranking John 3:16) suggest scoring
+  overlapping two-verse windows; measure that and RRF fusion of FTS + cosine.
+- Traps score as high as true verses on every embedding lane, so similarity
+  must stay a labeled operator suggestion — never detection confidence, never
+  auto-projection.
+- Cold-index and latency verification on macOS/Linux; only Windows is measured.
 
 ## F09 — Online lyrics discovery (Planned)
 
@@ -1055,8 +1101,9 @@ Different files from detection, so these run alongside it:
 
 All three are gated on external input, which is why they come last:
 
-- [ ] F08 semantic search (L): benchmark a local model on the Windows baseline
-      before choosing it; no `search_embeddings` until then.
+- [ ] F08 semantic search (L): Windows baseline benchmark done — MiniLM Q8_0
+      hybrid with FTS recommended (`cmd/search-bench`, `benchmarks/README.md`).
+      The build itself (`internal/search`, `search_embeddings`) is still open.
 - [ ] F09 Genius (M–L): provider terms and an OS credential store, not just code.
 - [ ] F10 EasyWorship (L): permitted fixtures, a supported-format list,
       `import_runs`, and transactional import with a result summary.

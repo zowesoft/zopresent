@@ -1,0 +1,235 @@
+{
+  "name": "semantic-search-set",
+  "queries": [
+    {
+      "id": "romans-828-purpose",
+      "text": "the guarantee that every circumstance is being woven toward a beneficial outcome for those devoted to the Almighty",
+      "type": "semantic",
+      "gold": ["Romans 8:28"]
+    },
+    {
+      "id": "new-identity",
+      "text": "a fresh identity and the past erased when someone believes in Jesus",
+      "type": "semantic",
+      "gold": ["2 Corinthians 5:17"]
+    },
+    {
+      "id": "john-316-gift",
+      "text": "the Creator sacrificing his unique child so believers avoid ruin and gain unending existence",
+      "type": "semantic",
+      "gold": ["John 3:16"]
+    },
+    {
+      "id": "shepherd-care",
+      "text": "Jehovah tending me like a flock and supplying every necessity",
+      "type": "semantic",
+      "gold": ["Psalms 23:1"]
+    },
+    {
+      "id": "phil-413-strength",
+      "text": "ability to face any circumstance because Jesus supplies the power",
+      "type": "semantic",
+      "gold": ["Philippians 4:13"]
+    },
+    {
+      "id": "prov-356-trust",
+      "text": "total dependence on heaven rather than personal insight, with the promise of direction",
+      "type": "semantic",
+      "gold": ["Proverbs 3:5-6"]
+    },
+    {
+      "id": "isa-4031-wings",
+      "text": "fresh stamina for people who hope in the Lord, rising on the wind like great birds",
+      "type": "semantic",
+      "gold": ["Isaiah 40:31"]
+    },
+    {
+      "id": "matt-1128-rest",
+      "text": "a call to worn-out people carrying burdensome loads to receive relief from the Savior",
+      "type": "semantic",
+      "gold": ["Matthew 11:28"]
+    },
+    {
+      "id": "pet-57-anxiety",
+      "text": "giving every anxiety to heaven since the Almighty looks after you",
+      "type": "semantic",
+      "gold": ["1 Peter 5:7"]
+    },
+    {
+      "id": "james-15-wisdom",
+      "text": "requesting discernment from the Creator when you are short of it, and receiving a generous answer",
+      "type": "semantic",
+      "gold": ["James 1:5"]
+    },
+    {
+      "id": "ps-461-refuge",
+      "text": "the Almighty as a safe hiding place and source of power during crisis",
+      "type": "semantic",
+      "gold": ["Psalms 46:1"]
+    },
+    {
+      "id": "jer-2911-future",
+      "text": "heaven's intention of welfare and a confident future for his people",
+      "type": "semantic",
+      "gold": ["Jeremiah 29:11"]
+    },
+    {
+      "id": "gen-11-origin",
+      "text": "how everything that exists came into being at the start through the Creator",
+      "type": "semantic",
+      "gold": ["Genesis 1:1"]
+    },
+    {
+      "id": "ps-119105-lamp",
+      "text": "scripture as illumination for the journey ahead",
+      "type": "semantic",
+      "gold": ["Psalms 119:105"]
+    },
+    {
+      "id": "cor-134-love",
+      "text": "the quality of being slow to anger and gentle toward others",
+      "type": "semantic",
+      "gold": ["1 Corinthians 13:4"]
+    },
+    {
+      "id": "matt-633-first",
+      "text": "prioritize heaven's reign and right living, and every necessity will be supplied",
+      "type": "semantic",
+      "gold": ["Matthew 6:33"]
+    },
+    {
+      "id": "rom-122-renew",
+      "text": "inner change through a refreshed outlook rather than imitation of the age",
+      "type": "semantic",
+      "gold": ["Romans 12:2"]
+    },
+    {
+      "id": "heb-111-faith",
+      "text": "assurance about realities not yet visible and conviction regarding what is awaited",
+      "type": "semantic",
+      "gold": ["Hebrews 11:1"]
+    },
+    {
+      "id": "ps-234-valley",
+      "text": "courage while passing through death's dark gorge because the Almighty accompanies me",
+      "type": "semantic",
+      "gold": ["Psalms 23:4"]
+    },
+    {
+      "id": "john-146-way",
+      "text": "the Messiah as the exclusive path to God",
+      "type": "semantic",
+      "gold": ["John 14:6"]
+    },
+    {
+      "id": "kw-still-waters",
+      "text": "still waters",
+      "type": "keyword",
+      "gold": ["Psalms 23:2"]
+    },
+    {
+      "id": "kw-kingdom",
+      "text": "kingdom of heaven",
+      "type": "keyword",
+      "gold": ["Matthew 5:3", "Matthew 5:10"]
+    },
+    {
+      "id": "kw-faith-hope",
+      "text": "faith hope charity",
+      "type": "keyword",
+      "gold": ["1 Corinthians 13:13"]
+    },
+    {
+      "id": "kw-courage",
+      "text": "be strong and of a good courage",
+      "type": "keyword",
+      "gold": ["Joshua 1:9"]
+    },
+    {
+      "id": "kw-shepherd",
+      "text": "the Lord is my shepherd",
+      "type": "keyword",
+      "gold": ["Psalms 23:1"]
+    },
+    {
+      "id": "kw-valley",
+      "text": "valley of the shadow of death",
+      "type": "keyword",
+      "gold": ["Psalms 23:4"]
+    },
+    {
+      "id": "trap-help-themselves",
+      "text": "god helps those who help themselves",
+      "type": "trap",
+      "gold": []
+    },
+    {
+      "id": "trap-cleanliness",
+      "text": "cleanliness is next to godliness",
+      "type": "trap",
+      "gold": []
+    },
+    {
+      "id": "trap-announcement",
+      "text": "the youth picnic is scheduled for next Saturday at noon",
+      "type": "trap",
+      "gold": []
+    },
+    {
+      "id": "filter-ot-hope",
+      "text": "the promise of a future and a hope",
+      "type": "semantic",
+      "testament": "old",
+      "gold": ["Jeremiah 29:11"]
+    },
+    {
+      "id": "filter-psalms-care",
+      "text": "the Lord as my caretaker who provides everything I need",
+      "type": "semantic",
+      "books": ["Psalms"],
+      "gold": ["Psalms 23:1"]
+    },
+    {
+      "id": "song-grace-semantic",
+      "text": "a hymn about undeserved favor rescuing a lost sinner",
+      "type": "semantic",
+      "domain": "song",
+      "gold": ["Amazing Grace"]
+    },
+    {
+      "id": "song-great-semantic",
+      "text": "a song praising God's greatness through creation",
+      "type": "semantic",
+      "domain": "song",
+      "gold": ["How Great Thou Art"]
+    },
+    {
+      "id": "song-grace-keyword",
+      "text": "amazing grace how sweet the sound",
+      "type": "keyword",
+      "domain": "song",
+      "gold": ["Amazing Grace"]
+    },
+    {
+      "id": "song-great-keyword",
+      "text": "then sings my soul my Savior God to thee",
+      "type": "keyword",
+      "domain": "song",
+      "gold": ["How Great Thou Art"]
+    },
+    {
+      "id": "song-chains-semantic",
+      "text": "a worship song about chains falling off and being set free",
+      "type": "semantic",
+      "domain": "song",
+      "gold": ["Amazing Grace"]
+    },
+    {
+      "id": "song-awe-semantic",
+      "text": "a hymn of awe at the worlds God's hands have made",
+      "type": "semantic",
+      "domain": "song",
+      "gold": ["How Great Thou Art"]
+    }
+  ]
+}

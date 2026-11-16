@@ -66,6 +66,34 @@ Fetch-Large "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6
 Fetch-Large "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main/joiner.int8.onnx" "benchmarks\models\parakeet-tdt-0.6b-v3-int8\joiner.int8.onnx"
 Fetch-Large "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main/tokens.txt" "benchmarks\models\parakeet-tdt-0.6b-v3-int8\tokens.txt"
 
+# --- llama.cpp embedding sidecar (F08 search benchmark) ---------------------
+# CPU builds exist for every supported platform; pin the nightly tag the same
+# way whisper is pinned. For other platforms pick the matching asset from:
+#   https://github.com/ggml-org/llama.cpp/releases/tag/b12436
+#   macOS arm64: llama-b12436-bin-macos-arm64.tar.gz
+#   macOS x64:   llama-b12436-bin-macos-x64.tar.gz
+#   linux x64:   llama-b12436-bin-ubuntu-x64.tar.gz
+# The sidecar lives in its own directory: its ggml DLLs must not overwrite
+# the whisper build's DLLs in tools\Release.
+$LLAMA_TAG = "b12436"
+$LLAMA_DIR = "benchmarks\tools\llama-$LLAMA_TAG"
+if (-not (Test-Path "$LLAMA_DIR\llama-server.exe")) {
+    New-Item -ItemType Directory -Force $LLAMA_DIR | Out-Null
+    curl.exe -L --fail --retry 10 --retry-delay 3 --retry-all-errors `
+        -o benchmarks\tools\llama-win-cpu-x64.zip `
+        "https://github.com/ggml-org/llama.cpp/releases/download/$LLAMA_TAG/llama-$LLAMA_TAG-bin-win-cpu-x64.zip"
+    if ($LASTEXITCODE -ne 0) { throw "llama.cpp download failed (curl exit $LASTEXITCODE)" }
+    Expand-Archive -Path benchmarks\tools\llama-win-cpu-x64.zip -DestinationPath $LLAMA_DIR -Force
+    Remove-Item benchmarks\tools\llama-win-cpu-x64.zip
+}
+
+# --- Embedding models, Q8_0 (near-f16 quality, small footprint) -------------
+# Candidates for the F08 model decision; search-bench scores each against the
+# FTS baseline on benchmarks/search-set.
+Fetch-Large "https://huggingface.co/second-state/All-MiniLM-L6-v2-Embedding-GGUF/resolve/main/all-MiniLM-L6-v2-Q8_0.gguf" "benchmarks\models\all-MiniLM-L6-v2-Q8_0.gguf"
+Fetch-Large "https://huggingface.co/ChristianAzinn/bge-small-en-v1.5-gguf/resolve/main/bge-small-en-v1.5.Q8_0.gguf" "benchmarks\models\bge-small-en-v1.5.Q8_0.gguf"
+Fetch-Large "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf" "benchmarks\models\nomic-embed-text-v1.5.Q8_0.gguf"
+
 Write-Host "Tools ready:"
 Get-ChildItem benchmarks\tools\Release\*.exe | Select-Object Name
 Get-ChildItem benchmarks\models | Select-Object Name

@@ -1,3 +1,15 @@
+# Zopresent Benchmarks
+
+Two harnesses live here:
+
+- **ASR spoken-reference benchmark** (`cmd/asr-bench`) — how many spoken
+  scripture references survive transcription and detection; decides which
+  engine backs Live Detection and which detection types may be enabled.
+- **Semantic search benchmark** (`cmd/search-bench`) — local embedding models
+  against the FTS baseline on a labeled query set; the measurement the PRD
+  requires before F08 selects a model and vector storage. See
+  [Semantic search benchmark](#semantic-search-benchmark-f08) below.
+
 # ASR Spoken-Reference Benchmark
 
 Measures how many **spoken scripture references survive transcription and
@@ -18,15 +30,17 @@ the PRD's precision bar before it is enabled in the app.
 
 ```
 benchmarks/
-  fetch.ps1        downloads whisper.cpp CPU binaries + tiny.en model
+  fetch.ps1        downloads whisper.cpp, sherpa-onnx, llama.cpp CPU binaries
+                   and their models
   make-tts-set.ps1 generates a synthetic set covering all four detection
                    types (Windows SAPI voices)
   sample-set/      detector-only demo set (no audio required)
   smoke-set/       engine smoke test (SAPI-synthesized speech + tone)
   tts-set/         generated set: explicit, contextual, quote, correction
-  models/          downloaded .ggml/.onnx models          [gitignored]
+  search-set/      labeled semantic/keyword/trap queries for search-bench
+  models/          downloaded .ggml/.onnx/.gguf models     [gitignored]
   tools/           downloaded engine binaries            [gitignored]
-  dumps/           -dump transcripts for debugging       [gitignored]
+  dumps/           -dump transcripts, sidecar logs, vector caches [gitignored]
   sermon-set/      create this with YOUR real recordings (see below)
 ```
 
@@ -265,4 +279,143 @@ Notes:
 
 The whole point of this harness: **benchmark those on real sanctuary audio
 through the actual detector before committing.**
+
+# Semantic search benchmark (F08)
+
+`cmd/search-bench` answers the question the tracker gates F08 on: *which local
+embedding model, if any, earns its place on the supported Windows baseline?*
+It embeds the installed translation's verses plus the song catalog through a
+`llama-server` sidecar, ranks a labeled query set by cosine similarity, and
+scores the same queries through the production FTS path. The report carries
+the four numbers the PRD demands before a model is selected: retrieval
+relevance, indexing cost, memory use and latency.
+
+The harness is pure Go (`CGO_ENABLED=0`); only the sidecar binary is per-OS.
+llama.cpp ships CPU builds for Windows, macOS (arm64/x64) and Linux, so the
+same command shape runs on every supported platform.
+
+## Running it
+
+```powershell
+powershell -File benchmarks/fetch.ps1   # also fetches llama.cpp + 3 GGUF models
+
+go run ./cmd/search-bench -set benchmarks/search-set `
+  -core-db "$env:LOCALAPPDATA\Zowesoft\Zopresent\zopresent.db" `
+  -translation-dir "$env:LOCALAPPDATA\Zowesoft\Zopresent\translations" `
+  -translation kjv `
+  -engine "minilm-q8=benchmarks/tools/llama-b12436/llama-server.exe -m benchmarks/models/all-MiniLM-L6-v2-Q8_0.gguf --embeddings --port {port} -c 8192 -b 8192 -ub 2048 --parallel 4 -t 4" `
+  -cache benchmarks/dumps/search-cache -out benchmarks/search-report-minilm.json
+```
+
+- `{port}` is replaced with a free loopback port; the harness waits for
+  `/health` before indexing. Sidecar logs land in `benchmarks/dumps/search/`.
+- `-engine` is repeatable — several models score in one pass against the same
+  FTS baseline. With no `-engine` flags only the baseline runs.
+- `-cache` persists vectors keyed by model identity + corpus content, so
+  repeat runs report `warm` load time instead of re-embedding; cold indexing
+  cost is always measured at least once and never hidden.
+- `-t 4` in the spec models a modest machine; raise it to measure a bigger
+  one. `-batch`, `-runs` and `-depth` tune batch size, timed repetitions and
+  FTS retrieval depth.
+- Model task prefixes are harness tokens, not server flags: nomic wants
+  `query-prefix=search_query: doc-prefix=search_document:`, bge-small wants
+  `query-prefix="Represent this sentence for searching relevant passages: "`.
+  MiniLM needs none.
+
+## The query set
+
+`search-set/manifest.json` labels every query with a type and gold truth:
+
+- **semantic** — meaning-based paraphrases with (near) zero content-word
+  overlap with the gold verse; the harness measures and reports the actual
+  overlap so the set cannot quietly drift into keyword matching. Includes
+  testament- and book-filtered queries.
+- **keyword** — exact or near-exact phrases the FTS path should already win.
+- **trap** — proverbs that are not scripture and announcement-style noise;
+  gold is empty, and the report shows what each lane returns anyway.
+- **domain: song** — queries against the installed song catalog (titles and
+  lyric sections), gold by song title.
+
+Gold references may be ranges; a hit is the first ranked document inside any
+gold range. Recall@1/5/10 and MRR are reported per type, per domain. Embedding
+lanes rank the whole corpus (exact relevance, no ANN approximation); the FTS
+lane ranks its retrieved depth (default 50).
+
+## Reading the report
+
+- **semantic recall@10** is the headline: what fraction of meaning-based
+  queries surface their passage in the first ten results. The FTS baseline
+  sits near zero by construction — that gap is the feature's reason to exist.
+- **keyword recall@10** guards against regression: semantic search must not
+  lose the exact-phrase searches the app already answers well.
+- **query p50/p95** includes embedding the query plus ranking, per type.
+  Compare against the same 150 ms search budget `cmd/bible-bench` holds the
+  FTS path to.
+- **index** reports docs/s, vector footprint, model size and the sidecar's
+  peak resident set while indexing and while querying — the PRD baseline is
+  a limited-RAM Windows machine running semantic indexing alongside media
+  and Whisper, so memory is a selection criterion, not a footnote.
+- **traps** show the top similarity a non-scripture query reaches; that
+  separation is what a future "no confident match" cutoff would sit on.
+  Similarity is a ranking score, never a detection confidence, and nothing
+  here auto-projects.
+
+This slice measures and recommends; it does not build the feature. No
+`search_embeddings` table, no app wiring — those wait for the model decision
+this report informs.
+
+## Windows baseline results (2026-11-16)
+
+Machine: Intel i5-4300U (2 cores / 4 threads, 1.9 GHz), 8 GB RAM, Windows 11 —
+the PRD's limited-hardware baseline, with the app itself running alongside.
+Corpus: KJV, 31,102 verses + 7 song documents. Query set: 22 semantic
+paraphrases (measured content-word overlap with gold: 1.9%), 6 keyword,
+3 traps, 6 song queries. Full numbers in `search-report.json`; per-query
+ranks with `-v`.
+
+| Lane | Semantic recall@10 | Keyword recall@10 | Songs | Query p95 | Cold index | Sidecar RSS |
+|---|---|---|---|---|---|---|
+| FTS (production) | 0% (0/22) | 100% | 2/6 | 544 ms semantic / 68 ms keyword | — | — |
+| minilm-q8 | 22.7% (5/22) | 33% | 6/6 rank 1 | 78 ms | ~21 min (24.6 docs/s) | 32–36 MB |
+| bge-q8 | 18.2% (4/22) | 100% | 6/6 rank 1 | 199 ms | ~46 min (11.4 docs/s) | 44–48 MB |
+| nomic-q8 | not scored | — | — | — | ~4 h projected (2.17 docs/s) | 168 MB at 16% |
+
+Cold index times come from the first pass's sidecar logs (completed-task
+counts match the corpus exactly); the tracked report re-ran from the warm
+vector cache, which loads in ~200–450 ms. Models are Q8_0 GGUF: 23.8 / 35.1 /
+146 MB; vectors 45.6 MB per 384-dim model, 91 MB for nomic's 768.
+
+**Recommendation: all-MiniLM-L6-v2 (Q8_0), strictly hybrid with FTS.**
+
+- FTS stays the primary path: it owns keyword and phrase search (100%,
+  ~3 ms p50) and MiniLM alone *regresses* it ("still waters" lands at rank
+  156). The semantic lane supplements, never replaces.
+- MiniLM wins the semantic lane on this baseline: best recall@10 (and 12/22
+  within rank 50 vs bge's 6/22), query p95 inside the 150 ms search budget,
+  half bge's index cost, smallest model and footprint.
+- bge-small is the runner-up: perfect keyword behaviour and higher gold
+  similarity, but its score distribution is compressed (non-matches score
+  almost as high as matches), its semantic recall is lower on this set, and
+  its p95 misses the budget on baseline hardware.
+- nomic is disqualified on install cost: a ~4-hour first index and growing
+  168 MB+ RSS on the baseline machine, for a context window (8,192 tokens)
+  that verse- and stanza-level indexing never uses.
+
+**Honest limits of the result:**
+
+- The semantic set is deliberately hard — near-zero word overlap, archaic
+  KJV vocabulary, single-verse gold. Real operator queries carry partial
+  overlap and will score better; several bge "misses" are adjacent verses
+  (John 3:18 for a John 3:16 query) an operator would still accept. Treat
+  these numbers as a lower bound, not a ceiling.
+- 22 semantic queries is a small sample. Grow the set with real operator
+  queries before calibrating the shipped feature.
+- Neither model separates traps cleanly (bge's top trap score 0.734 beats
+  many true matches). Similarity is a ranking score, never a detection
+  confidence; semantic results stay labeled suggestions with no
+  auto-projection, and a "no confident match" cutoff cannot be trusted to
+  these scores alone.
+- Worth measuring next if the semantic lane ships: overlapping two-verse
+  windows for multi-verse paraphrases, and reciprocal-rank fusion of the
+  FTS and vector rankings.
 
