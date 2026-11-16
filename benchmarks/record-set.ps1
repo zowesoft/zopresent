@@ -8,6 +8,7 @@
 #
 # Usage:
 #   powershell -File benchmarks/record-set.ps1 -ListDevices
+#   powershell -File benchmarks/record-set.ps1 -PlanOnly
 #   powershell -File benchmarks/record-set.ps1 -Device "Microphone (USB Audio)"
 #   powershell -File benchmarks/record-set.ps1 -Lines benchmarks/calibration-lines.txt
 #
@@ -20,7 +21,8 @@ param(
     [string]$Lines = "benchmarks\calibration-lines.txt",
     [double]$Seconds = 8,
     [int]$Countdown = 3,
-    [switch]$ListDevices
+    [switch]$ListDevices,
+    [switch]$PlanOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,36 +53,41 @@ function Get-AudioDevices([string]$Ffmpeg) {
     return $devices
 }
 
-$ffmpeg = Find-Ffmpeg
-$devices = Get-AudioDevices $ffmpeg
+if (-not $PlanOnly) {
+    $ffmpeg = Find-Ffmpeg
+    $devices = Get-AudioDevices $ffmpeg
 
-if ($ListDevices) {
-    if ($devices.Count -eq 0) {
-        Write-Host "No DirectShow audio capture devices found."
-    } else {
-        Write-Host "Audio capture devices:"
-        $devices | ForEach-Object { Write-Host "  $_" }
+    if ($ListDevices) {
+        if ($devices.Count -eq 0) {
+            Write-Host "No DirectShow audio capture devices found."
+        } else {
+            Write-Host "Audio capture devices:"
+            $devices | ForEach-Object { Write-Host "  $_" }
+        }
+        exit 0
     }
-    exit 0
-}
 
-if ([string]::IsNullOrWhiteSpace($Device)) {
-    if ($devices.Count -eq 1) {
-        $Device = $devices[0]
-        Write-Host "Using the only capture device: $Device"
-    } else {
-        Write-Host "Pass -Device with one of:"
-        $devices | ForEach-Object { Write-Host "  $_" }
-        throw "no capture device selected (use -ListDevices to see them)"
+    if ([string]::IsNullOrWhiteSpace($Device)) {
+        if ($devices.Count -eq 1) {
+            $Device = $devices[0]
+            Write-Host "Using the only capture device: $Device"
+        } else {
+            Write-Host "Pass -Device with one of:"
+            $devices | ForEach-Object { Write-Host "  $_" }
+            throw "no capture device selected (use -ListDevices to see them)"
+        }
     }
 }
 
 if (-not (Test-Path $Lines)) { throw "spoken script not found: $Lines" }
 
 # Script format, one clip per line:
-#   <references> :: <sentence to read aloud>
+#   <references> :: <sentence to read aloud> [:: <type> [established=<ref>]]
 # references is one or more references separated by ';' (written form, the gold
 # label), or empty for a clip that must yield nothing (announcements, music).
+# type is explicit (the default), contextual, quote or correction; a contextual
+# clip also declares the passage on the wall its bare verse calls resolve
+# against. For a correction, the gold is the passage the queue should keep.
 $planned = @()
 $number = 0
 foreach ($raw in Get-Content $Lines) {
@@ -90,6 +97,29 @@ foreach ($raw in Get-Content $Lines) {
     if ($split -lt 0) { throw "line without '::': $line" }
     $refsText = $line.Substring(0, $split).Trim()
     $spoken = $line.Substring($split + 2).Trim()
+
+    # An optional trailing segment names the detection type the clip exercises.
+    $type = ""
+    $established = ""
+    $tail = $spoken.IndexOf("::")
+    if ($tail -ge 0) {
+        $meta = $spoken.Substring($tail + 2).Trim()
+        $spoken = $spoken.Substring(0, $tail).Trim()
+        # The type is the first word; the established passage is the rest, and
+        # a book name carries spaces ("established=John 3").
+        if ($meta -match '^(explicit|contextual|quote|correction)\b') {
+            $type = $Matches[1]
+            $meta = $meta.Substring($Matches[1].Length).Trim()
+        }
+        if ($meta.StartsWith("established=")) {
+            $established = $meta.Substring("established=".Length).Trim()
+        } elseif ($meta -ne "") {
+            throw "unknown clip metadata '$meta' in line: $line"
+        }
+    }
+    if ($established -ne "" -and $type -ne "contextual") {
+        throw "established only applies to a contextual clip: $line"
+    }
     if ($spoken -eq "") { throw "line with nothing to read: $line" }
 
     $number++
@@ -101,14 +131,28 @@ foreach ($raw in Get-Content $Lines) {
     $slug = if ($refs.Count -gt 0) { $refs[0] } else { "no-reference" }
     $slug = ($slug.ToLower() -replace "[^a-z0-9]+", "-").Trim("-")
     $planned += [pscustomobject]@{
-        ID       = "{0:d2}-{1}" -f $number, $slug
-        File     = "{0:d2}-{1}.wav" -f $number, $slug
-        Refs     = $refs
-        Spoken   = $spoken
+        ID          = "{0:d2}-{1}" -f $number, $slug
+        File        = "{0:d2}-{1}.wav" -f $number, $slug
+        Refs        = $refs
+        Spoken      = $spoken
+        Type        = $type
+        Established = $established
     }
 }
 
 if ($planned.Count -eq 0) { throw "$Lines declares no clips" }
+
+if ($PlanOnly) {
+    foreach ($clip in $planned) {
+        $lane = if ($clip.Type -ne "") { $clip.Type } else { "explicit" }
+        $wall = if ($clip.Established -ne "") { " (wall: {0})" -f $clip.Established } else { "" }
+        $gold = if ($clip.Refs.Count) { $clip.Refs -join "; " } else { "(nothing)" }
+        Write-Host ("{0}  [{1}{2}]  {3}" -f $clip.ID, $lane, $wall, $gold)
+        Write-Host ("    {0}" -f $clip.Spoken)
+    }
+    Write-Host ("{0} clip(s) planned; nothing recorded" -f $planned.Count)
+    exit 0
+}
 
 New-Item -ItemType Directory -Force $SetDir | Out-Null
 $manifestPath = Join-Path $SetDir "manifest.json"
@@ -128,6 +172,14 @@ foreach ($clip in $planned) {
     Write-Host ""
     Write-Host "--------------------------------------------------------------"
     Write-Host ("{0}  ({1})" -f $clip.ID, ($(if ($clip.Refs.Count) { $clip.Refs -join ", " } else { "no reference expected" })))
+    if ($clip.Type -ne "" -and $clip.Type -ne "explicit") {
+        $how = switch ($clip.Type) {
+            "contextual" { "contextual: {0} is already on the wall; call the verse without naming the book" -f $clip.Established }
+            "quote"      { "quote: read the scripture word for word without naming the passage" }
+            "correction" { "correction: say the wrong reference first, then take it back and name the right one" }
+        }
+        Write-Host $how -ForegroundColor Cyan
+    }
     Write-Host $clip.Spoken
     Write-Host "--------------------------------------------------------------"
     for ($i = $Countdown; $i -gt 0; $i--) {
@@ -156,12 +208,15 @@ foreach ($clip in $planned) {
 
     # Re-recording an existing id replaces its entry instead of duplicating it.
     $clips = @($clips | Where-Object { $_.id -ne $clip.ID })
-    $clips += [pscustomobject]@{
+    $entry = [pscustomobject]@{
         id         = $clip.ID
         file       = $clip.File
         references = $clip.Refs
         transcript = $clip.Spoken
     }
+    if ($clip.Type -ne "") { $entry | Add-Member -NotePropertyName type -NotePropertyValue $clip.Type }
+    if ($clip.Established -ne "") { $entry | Add-Member -NotePropertyName established -NotePropertyValue $clip.Established }
+    $clips += $entry
     Write-Host ("  saved {0}" -f $wav)
 }
 

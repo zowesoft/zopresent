@@ -58,16 +58,21 @@ sweep consumes.
 
 ```powershell
 powershell -File benchmarks/record-set.ps1 -ListDevices
+powershell -File benchmarks/record-set.ps1 -PlanOnly   # check the labels, record nothing
 powershell -File benchmarks/record-set.ps1 -Device "Microphone Array (Realtek High Definition Audio)"
 go run ./cmd/asr-bench -set benchmarks/sermon-set
   -engine "whisper.tiny=benchmarks/tools/Release/whisper-cli.exe -m benchmarks/models/ggml-tiny.en.bin -np -f {audio}"
 ```
 
 - The script is `benchmarks/calibration-lines.txt`: one clip per line as
-  `<written references> :: <sentence to read aloud>`, empty references for a
-  clip that must yield nothing. Lines deliberately vary the spoken form
-  (chapter/verse in words, "turn with me to", bare numbers, ranges, two
-  references in one breath) because that is what the scorer has to handle.
+  `<written references> :: <sentence to read aloud> [:: <type> [established=<ref>]]`,
+  empty references for a clip that must yield nothing. The lines cover all
+  four detection types — explicit calls, word-for-word quotations, bare verse
+  calls against an established passage, and corrections — each with a trap
+  clip, and deliberately vary the spoken form (chapter/verse in words, "turn
+  with me to", bare numbers, ranges, two references in one breath) because
+  that is what the scorer has to handle. `-PlanOnly` prints the planned clips
+  and their lanes without recording, so the labels can be checked first.
 - Default output is `benchmarks/sermon-set/`, which is gitignored: real
   recordings and their manifest stay on the machine that made them.
 - `-Seconds` (default 8) sets clip length; `-Countdown` gives the speaker time
