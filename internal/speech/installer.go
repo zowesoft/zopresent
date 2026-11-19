@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"zopresent/internal/archive"
 )
 
 // ErrChecksum is returned when a downloaded or bundled file does not match its
@@ -154,7 +156,7 @@ type Installer struct {
 func NewInstaller() *Installer {
 	return &Installer{
 		client:  &http.Client{Timeout: 0},
-		extract: extractTarBz2,
+		extract: archive.ExtractTarBz2,
 	}
 }
 
@@ -225,20 +227,20 @@ func (i *Installer) installRuntime(root string, engine Engine, r Runtime, done, 
 	}
 	defer os.RemoveAll(tmp)
 
-	archive := filepath.Join(tmp, r.Archive)
+	archivePath := filepath.Join(tmp, r.Archive)
 	url := r.URL()
 	// The archive itself is verified against its pinned hash when we have one,
 	// so a truncated download cannot pass as complete.
-	if err := i.downloadFile(url, archive, r.ArchiveSHA256, r.Archive, done, total); err != nil {
+	if err := i.downloadFile(url, archivePath, r.ArchiveSHA256, r.Archive, done, total); err != nil {
 		return err
 	}
 
 	extractDir := filepath.Join(tmp, "x")
-	if err := i.extract(archive, extractDir); err != nil {
+	if err := i.extract(archivePath, extractDir); err != nil {
 		return err
 	}
 
-	binSrc, err := findFile(extractDir, r.Binary)
+	binSrc, err := archive.FindFile(extractDir, r.Binary)
 	if err != nil {
 		return fmt.Errorf("locate %s in %s: %w", r.Binary, r.Archive, err)
 	}
@@ -247,7 +249,7 @@ func (i *Installer) installRuntime(root string, engine Engine, r Runtime, done, 
 	}
 
 	if r.Library != "" {
-		libSrc, err := findFile(extractDir, r.Library)
+		libSrc, err := archive.FindFile(extractDir, r.Library)
 		if err != nil {
 			return fmt.Errorf("locate %s in %s: %w", r.Library, r.Archive, err)
 		}

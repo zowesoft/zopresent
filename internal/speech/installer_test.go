@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"zopresent/internal/archive"
 )
 
 // testEngine is a catalogue-shaped engine whose runtime points at a test
@@ -165,7 +167,7 @@ func TestExtractRefusesArchiveEntryEscapingDestination(t *testing.T) {
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "out")
 
-	err := extractTar(bytes.NewReader(tarBytes(t, map[string][]byte{
+	err := archive.ExtractTar(bytes.NewReader(tarBytes(t, map[string][]byte{
 		"../escaped.txt": []byte("should not be written"),
 	})), dest)
 	if err == nil {
@@ -178,7 +180,7 @@ func TestExtractRefusesArchiveEntryEscapingDestination(t *testing.T) {
 
 func TestSafeJoinKeepsPathsInsideRoot(t *testing.T) {
 	root := t.TempDir()
-	ok, err := safeJoin(root, "bin/tool")
+	ok, err := archive.SafeJoin(root, "bin/tool")
 	if err != nil {
 		t.Fatalf("legitimate entry rejected: %v", err)
 	}
@@ -186,7 +188,7 @@ func TestSafeJoinKeepsPathsInsideRoot(t *testing.T) {
 		t.Fatalf("legitimate entry left the root: %s", ok)
 	}
 	for _, bad := range []string{"../up", "a/../../up", "/abs", ".."} {
-		if _, err := safeJoin(root, bad); err == nil {
+		if _, err := archive.SafeJoin(root, bad); err == nil {
 			t.Fatalf("unsafe entry %q was accepted", bad)
 		}
 	}
@@ -195,13 +197,13 @@ func TestSafeJoinKeepsPathsInsideRoot(t *testing.T) {
 // extractPlainTar is the extract signature Installer expects, backed by a tar
 // reader over an uncompressed archive. Test fixtures use it so the download and
 // placement path runs without a bzip2 encoder (Go's stdlib has none).
-func extractPlainTar(archive, dest string) error {
-	f, err := os.Open(archive)
+func extractPlainTar(path, dest string) error {
+	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	return extractTar(f, dest)
+	return archive.ExtractTar(f, dest)
 }
 
 // write creates a file with contents under dir.
