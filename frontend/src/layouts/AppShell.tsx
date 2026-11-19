@@ -969,6 +969,16 @@ function DetectionPanel({ onOpenBible }: { onOpenBible: (passage: BiblePassage) 
             </span>
             Continuous — segment automatically
           </button>
+          {detection.listening && detection.noSignal && (
+            <p
+              className="px-2 py-1.5 border border-[#4D3F1E] rounded-md bg-[#2B2413] text-amber text-[9.5px] leading-[1.5]"
+              role="status"
+            >
+              No audio signal: the microphone is open but delivers only silence. Check it is
+              not muted, that Windows allows desktop apps to use the microphone, and that the
+              selected input is the real mic rather than a virtual device.
+            </p>
+          )}
           {detection.lastError && (
             <p className="px-2 py-1.5 border border-[#4D1E1E] rounded-md bg-[#2B1313] text-[#FFB1B7] text-[9.5px] leading-[1.5]">{detection.lastError}</p>
           )}

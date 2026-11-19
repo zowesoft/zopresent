@@ -373,3 +373,72 @@ func TestLiveCaptureDeliversSamplesFromTheDefaultDevice(t *testing.T) {
 	}
 	t.Fatal("the default input delivered no audio within three seconds")
 }
+
+func TestSilentStreamReportsNoSignal(t *testing.T) {
+	service, _ := newTestService(t)
+	service.silenceHold = 20 * time.Millisecond
+	levels := make(chan Features, 128)
+	service.OnLevel(func(v Features) { levels <- v })
+	if err := service.Start(""); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer service.Stop()
+
+	// Frames keep arriving but they carry no signal: exactly the muted
+	// microphone / denied privacy setting / silent virtual device case.
+	deadline := time.After(3 * time.Second)
+	for {
+		service.push(make([]int16, 320))
+		select {
+		case got := <-levels:
+			if got.NoSignal {
+				if got.CapturedSamples == 0 {
+					t.Fatalf("no-signal reading has no captured samples: %+v", got)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("a stream delivering only silence never reported no signal")
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+}
+
+func TestNoSignalClearsWhenAudioArrives(t *testing.T) {
+	service, _ := newTestService(t)
+	service.silenceHold = 20 * time.Millisecond
+	levels := make(chan Features, 256)
+	service.OnLevel(func(v Features) { levels <- v })
+	if err := service.Start(""); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer service.Stop()
+
+	// Push silence until the reading says no signal...
+	deadline := time.After(3 * time.Second)
+	waitFor := func(want bool) Features {
+		for {
+			select {
+			case got := <-levels:
+				if got.NoSignal == want {
+					return got
+				}
+			case <-deadline:
+				t.Fatalf("reading never reached NoSignal=%v", want)
+			}
+		}
+	}
+	service.push(make([]int16, 320))
+	waitFor(true)
+
+	// ...then real audio must clear it again.
+	loud := make([]int16, 320)
+	for i := range loud {
+		loud[i] = int16(8000)
+	}
+	service.push(loud)
+	got := waitFor(false)
+	if got.Level <= silenceFloor {
+		t.Fatalf("level = %v after real audio, want above the silence floor", got.Level)
+	}
+}

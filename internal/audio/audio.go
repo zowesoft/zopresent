@@ -44,6 +44,19 @@ const (
 	// defaultInterval is how often levels are published while running.
 	defaultInterval = 100 * time.Millisecond
 
+	// noSignalAfter is how long a running stream may deliver only zeros
+	// before the reading says there is no signal. A stream can be open and
+	// healthy while the chosen microphone is muted, the OS is denying
+	// desktop apps the microphone, or a virtual device simply outputs
+	// silence - in every one of those cases packets keep arriving, so the
+	// stall detector never fires and only the level can tell.
+	noSignalAfter = 3 * time.Second
+
+	// silenceFloor is the level below which a block counts as silence. The
+	// level is RMS scaled by four, so this is about one LSB of a 16-bit
+	// sample per block - quieter than any real microphone hears.
+	silenceFloor = 0.0005
+
 	stalledDetail = "the input device stopped delivering audio"
 )
 
@@ -62,6 +75,10 @@ type Features struct {
 	ZeroCrossingRate float64 `json:"zeroCrossingRate"`
 	BufferedSeconds  float64 `json:"bufferedSeconds"`
 	CapturedSamples  int64   `json:"capturedSamples"`
+	// NoSignal says the stream is open and delivering frames, but every one
+	// of them has been silent for at least noSignalAfter. It is the difference
+	// between "nobody is speaking" and "the microphone is not reaching us".
+	NoSignal bool `json:"noSignal"`
 }
 
 // Health is one published state of the stream. Detail carries the reason for
@@ -116,6 +133,9 @@ type Service struct {
 	// interval and stall are configuration, set before the first Start.
 	interval time.Duration
 	stall    time.Duration
+	// silenceHold is how long a running stream may stay silent before the
+	// reading says NoSignal; New sets it to noSignalAfter.
+	silenceHold time.Duration
 
 	mu       sync.Mutex
 	ring     *ring
@@ -126,7 +146,10 @@ type Service struct {
 	level    float64
 	zcr      float64
 	lastFeed time.Time
-	fatal    error
+	// lastSound is the last block that carried any signal; the monitor turns
+	// a long run of silence into NoSignal. It resets with every session.
+	lastSound time.Time
+	fatal     error
 	// healthState/healthDetail make every publisher agree on what was already
 	// announced, so a transition is emitted once.
 	healthState  string
@@ -142,6 +165,7 @@ func New() *Service {
 		ring:        newRing(SampleRate * BufferSeconds),
 		interval:    defaultInterval,
 		stall:       defaultStall,
+		silenceHold: noSignalAfter,
 		healthState: HealthStopped,
 	}
 }
@@ -194,6 +218,9 @@ func (s *Service) Start(deviceID string) error {
 	s.device = device
 	s.fatal = nil
 	s.lastFeed = time.Now()
+	// A fresh session has not had its chance to make a sound yet, so the
+	// no-signal clock starts now rather than carrying the last session's.
+	s.lastSound = s.lastFeed
 	// A new session starts with an empty ring, so Analyze cannot pick up the
 	// last session's audio and the segmenter's absolute offsets restart with
 	// it. Health stays as it was, so the first tick announces "ok".
@@ -279,7 +306,11 @@ func (s *Service) push(chunk []int16) {
 	s.mu.Lock()
 	s.ring.append(chunk)
 	s.level, s.zcr = features(chunk)
-	s.lastFeed = time.Now()
+	now := time.Now()
+	s.lastFeed = now
+	if s.level > silenceFloor {
+		s.lastSound = now
+	}
 	s.mu.Unlock()
 }
 
@@ -319,6 +350,17 @@ func (s *Service) monitor(stop <-chan struct{}) {
 			fatal := s.fatal
 			quiet := time.Since(s.lastFeed)
 			stall := s.stall
+			// Silence is judged from the last block that carried signal, not
+			// from the level alone: a quiet room measures a floor above zero,
+			// while a muted or blocked microphone measures exactly zero for as
+			// long as the stream stays open.
+			hold := s.silenceHold
+			if hold <= 0 {
+				hold = noSignalAfter
+			}
+			// Captured > 0 keeps a session that has not delivered its first
+			// block yet out of this: "starting" is not "no signal".
+			noSignal := captured > 0 && time.Since(s.lastSound) >= hold
 
 			state, detail := HealthOK, ""
 			switch {
@@ -336,6 +378,7 @@ func (s *Service) monitor(stop <-chan struct{}) {
 				ZeroCrossingRate: zcr,
 				BufferedSeconds:  buffered,
 				CapturedSamples:  captured,
+				NoSignal:         noSignal,
 			})
 			if changed {
 				s.emitHealth(Health{State: state, Detail: detail, Level: level})

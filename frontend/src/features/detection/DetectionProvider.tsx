@@ -18,6 +18,10 @@ type DetectionValue = {
   devices: AudioInput[];
   deviceId: string;
   level: number;
+  // NoSignal says the stream is open and delivering frames but every one has
+  // been silent: the microphone is muted, the OS is blocking desktop apps, or
+  // the chosen input is a virtual device with nothing behind it.
+  noSignal: boolean;
   transcript: string;
   candidates: models.DetectionView[];
   // Decisions already taken, newest first: the panel's recent list.
@@ -72,6 +76,7 @@ export function DetectionProvider({ children }: { children: ReactNode }) {
   const [devices, setDevices] = useState<AudioInput[]>([]);
   const [deviceId, setDeviceId] = useState('');
   const [level, setLevel] = useState(0);
+  const [noSignal, setNoSignal] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [candidates, setCandidates] = useState<models.DetectionView[]>([]);
   const [history, setHistory] = useState<models.DetectionHistoryView[]>([]);
@@ -181,12 +186,14 @@ export function DetectionProvider({ children }: { children: ReactNode }) {
         zeroCrossingRate: number;
         bufferedSeconds: number;
         capturedSamples: number;
+        noSignal?: boolean;
       };
       levelRef.current = reading.level;
       zeroCrossingRef.current = reading.zeroCrossingRate;
       capturedRef.current = reading.capturedSamples;
       setLevel(reading.level);
       setBufferedSeconds(reading.bufferedSeconds);
+      setNoSignal(Boolean(reading.noSignal));
     });
     return () => { cancel(); };
   }, []);
@@ -205,6 +212,7 @@ export function DetectionProvider({ children }: { children: ReactNode }) {
     setSegmenting(false);
     setListening(false);
     setLevel(0);
+    setNoSignal(false);
   }, []);
 
   // Health says what happened to the stream: a device that was removed ends
@@ -232,6 +240,25 @@ export function DetectionProvider({ children }: { children: ReactNode }) {
     });
     return () => { cancel(); };
   }, [stopCapture]);
+
+  // Choosing another input while listening reopens the stream on it. Setting
+  // the id alone only changes what the next Start will ask for, which left the
+  // old device (or the silent default) running until the operator stopped and
+  // started listening by hand.
+  const changeDevice = useCallback((deviceID: string) => {
+    setDeviceId(deviceID);
+    deviceIdRef.current = deviceID;
+    if (!listening) return;
+    void (async () => {
+      stopCapture();
+      try {
+        await App.AudioStart(deviceID);
+        setListening(true);
+      } catch (error) {
+        setLastError(`Microphone unavailable: ${errorMessage(error)}`);
+      }
+    })();
+  }, [listening, stopCapture]);
 
   const startCapture = useCallback(async () => {
     if (listening) return;
@@ -406,6 +433,7 @@ export function DetectionProvider({ children }: { children: ReactNode }) {
     devices,
     deviceId,
     level,
+    noSignal,
     transcript,
     candidates,
     history,
@@ -423,7 +451,7 @@ export function DetectionProvider({ children }: { children: ReactNode }) {
     segmenting,
     lastError,
     toggleContinuous,
-    setDevice: setDeviceId,
+    setDevice: changeDevice,
     setAutoProjection: setAutoProjectionEnabled,
     toggleAutoProjectionPause,
     setDetectionType,
@@ -438,9 +466,9 @@ export function DetectionProvider({ children }: { children: ReactNode }) {
       await Promise.all([refreshConfig(), refreshQueue()]);
     },
   }), [
-    listening, devices, deviceId, level, transcript, candidates, history, analyzing, disabled,
+    listening, devices, deviceId, level, noSignal, transcript, candidates, history, analyzing, disabled,
     engineConfigured, bufferedSeconds, segment, repeats, autoProjection, autoProjectionPaused, types, autoProjected,
-    continuous, segmenting, lastError, toggleContinuous, analyzeSegment,
+    continuous, segmenting, lastError, toggleContinuous, analyzeSegment, changeDevice,
     setAutoProjectionEnabled, toggleAutoProjectionPause, setDetectionType, toggleListening, analyze, analyzeFile, approve, project, dismiss, clear,
     refreshConfig, refreshQueue, refreshHistory,
   ]);
