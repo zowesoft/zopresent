@@ -59,7 +59,7 @@ export interface BibleBookView {
 /**
  * BibleSearchRequest is one operator query. Mode "auto" resolves a reference
  * first and falls back to word search; "words", "phrase" and "prefix" force
- * full-text search.
+ * full-text search; "meaning" ranks stored text by semantic similarity.
  */
 export interface BibleSearchRequest {
     "translationId": string;
@@ -98,6 +98,12 @@ export interface BibleVerse {
     "text": string;
     "snippet"?: string;
     "testament": string;
+
+    /**
+     * Similarity ranks meaning-based suggestions. It is zero for reference and
+     * text results and is never a detection confidence.
+     */
+    "similarity"?: number;
 }
 
 /**
@@ -420,6 +426,94 @@ export interface ScriptureRequest {
     "chapter": number;
     "verseStart": number;
     "verseEnd": number;
+}
+
+export interface SemanticAttributionView {
+    "components": SemanticComponentView[] | null;
+    "noticesPath": string;
+}
+
+/**
+ * SemanticComponentView is one fetched component and its license.
+ */
+export interface SemanticComponentView {
+    "name": string;
+    "license": string;
+    "homepage": string;
+}
+
+/**
+ * SemanticDomainStatusView is one index domain's install/build state, so the
+ * Settings card can show and trigger scripture and songs independently.
+ */
+export interface SemanticDomainStatusView {
+    "state": string;
+    "indexedDocs": number;
+    "pendingDocs": number;
+    "staleDocs": number;
+    "totalDocs": number;
+}
+
+/**
+ * SemanticHitView is a stored document with its similarity. The score ranks
+ * suggestions for the operator; it is not a detection confidence.
+ */
+export interface SemanticHitView {
+    "key": string;
+    "domain": string;
+    "score": number;
+    "label": string;
+    "text": string;
+    "translationId"?: string;
+    "bookId"?: number;
+    "chapter"?: number;
+    "verse"?: number;
+    "reference"?: string;
+    "testament"?: string;
+    "songId"?: string;
+    "songTitle"?: string;
+    "sectionId"?: string;
+    "author"?: string;
+    "copyright"?: string;
+    "ccliNumber"?: string;
+    "source"?: string;
+    "position"?: number;
+}
+
+/**
+ * SemanticSearchRequest is one meaning-based query over scripture or songs.
+ */
+export interface SemanticSearchRequest {
+    "query": string;
+
+    /**
+     * "bible" | "song"
+     */
+    "domain": string;
+    "translationId": string;
+    "testament": string;
+    "bookIds": number[] | null;
+    "limit": number;
+    "offset": number;
+}
+
+/**
+ * SemanticStatusView is what Settings shows: whether meaning search can be
+ * installed, built or used right now.
+ */
+export interface SemanticStatusView {
+    "supported": boolean;
+    "installed": boolean;
+    "modelId": string;
+    "modelName": string;
+    "dims": number;
+    "state": string;
+    "indexedDocs": number;
+    "pendingDocs": number;
+    "staleDocs": number;
+    "totalDocs": number;
+    "bible": SemanticDomainStatusView;
+    "songs": SemanticDomainStatusView;
 }
 
 export interface ServiceItemView {

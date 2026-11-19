@@ -389,6 +389,35 @@ func (r *SQLiteRepository) Passage(
 	return scanSearchResults(rows)
 }
 
+// AllVerses reads the whole translation in canonical order. Semantic indexing
+// needs every verse at once, not a search window.
+func (r *SQLiteRepository) AllVerses(ctx context.Context, translationID string) ([]Verse, error) {
+	packageDB, err := r.openPackage(ctx, translationID)
+	if err != nil {
+		return nil, err
+	}
+	defer packageDB.Close()
+
+	rows, err := packageDB.QueryContext(ctx, `
+		SELECT book_id, chapter, verse, text
+		FROM verses
+		ORDER BY book_id, chapter, verse`)
+	if err != nil {
+		return nil, fmt.Errorf("read verses from %s: %w", translationID, err)
+	}
+	defer rows.Close()
+
+	var verses []Verse
+	for rows.Next() {
+		var v Verse
+		if err := rows.Scan(&v.BookID, &v.Chapter, &v.Number, &v.Text); err != nil {
+			return nil, err
+		}
+		verses = append(verses, v)
+	}
+	return verses, rows.Err()
+}
+
 func (r *SQLiteRepository) openPackage(ctx context.Context, id string) (*sql.DB, error) {
 	_, filename, err := r.catalogEntry(ctx, id)
 	if err != nil {

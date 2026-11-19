@@ -106,6 +106,15 @@ export function BrowsePassage(req: $models.BrowsePassageRequest): $CancellablePr
     return $Call.ByID(1549292557, req);
 }
 
+/**
+ * BuildSemanticIndex refreshes one domain's index in the background; an empty
+ * domain builds both. Already-stored documents survive a stop, so the next
+ * build resumes rather than restarting.
+ */
+export function BuildSemanticIndex(domain: string): $CancellablePromise<void> {
+    return $Call.ByID(1693650289, domain);
+}
+
 export function ClearDetections(): $CancellablePromise<$models.DetectionView[] | null> {
     return $Call.ByID(2358866802);
 }
@@ -198,6 +207,14 @@ export function GetPresentationState(): $CancellablePromise<$models.Presentation
     return $Call.ByID(2716261496);
 }
 
+export function GetSemanticAttribution(): $CancellablePromise<$models.SemanticAttributionView> {
+    return $Call.ByID(1461537852);
+}
+
+export function GetSemanticStatus(): $CancellablePromise<$models.SemanticStatusView> {
+    return $Call.ByID(1879312185);
+}
+
 export function GetServiceOrder(): $CancellablePromise<$models.ServiceOrderView> {
     return $Call.ByID(2748070250);
 }
@@ -237,6 +254,14 @@ export function GetStorage(): $CancellablePromise<$models.StorageView> {
  */
 export function ImportMedia(paths: string[] | null): $CancellablePromise<$models.MediaImportResult> {
     return $Call.ByID(3099520704, paths);
+}
+
+/**
+ * InstallSemanticEngine returns once the download starts; the outcome arrives
+ * as semantic:config.
+ */
+export function InstallSemanticEngine(): $CancellablePromise<void> {
+    return $Call.ByID(4182320598);
 }
 
 /**
@@ -564,6 +589,14 @@ export function SearchBible(request: $models.BibleSearchRequest): $CancellablePr
 }
 
 /**
+ * SearchSemantic ranks stored scripture or song text by meaning. Nothing here
+ * projects: the operator previews and sends live exactly as with text search.
+ */
+export function SearchSemantic(req: $models.SemanticSearchRequest): $CancellablePromise<$models.SemanticHitView[] | null> {
+    return $Call.ByID(2390388301, req);
+}
+
+/**
  * SelectSpeechEngine looks under both roots, so the operator never handles a
  * path.
  */
@@ -648,6 +681,14 @@ export function SetSetting(key: string, value: string): $CancellablePromise<void
  */
 export function SetShortcuts(view: $models.ShortcutsView): $CancellablePromise<void> {
     return $Call.ByID(2916301934, view);
+}
+
+/**
+ * StopSemanticIndex cancels an in-flight build at the next batch boundary;
+ * an empty domain stops whichever build is running.
+ */
+export function StopSemanticIndex(domain: string): $CancellablePromise<void> {
+    return $Call.ByID(220728415, domain);
 }
 
 export function ThemeFonts(): $CancellablePromise<themes$0.FontFamily[] | null> {

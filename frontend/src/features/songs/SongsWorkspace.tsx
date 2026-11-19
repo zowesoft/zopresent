@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { App } from '../../../bindings/zopresent';
+import type { SemanticHitView } from '../../../bindings/zopresent/models';
 import { Icon } from '../../components/Icon';
 import { useStudio } from '../../stores/StudioProvider';
 import type { SongSectionInput } from '../../stores/StudioProvider';
@@ -55,6 +56,13 @@ export function SongsWorkspace() {
   const [pending, setPending] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState<{ kind: 'message' | 'error'; text: string } | null>(null);
+  // Meaning mode ranks stored titles and lyrics by similarity instead of
+  // matching words; it needs the model installed from Settings.
+  const [meaning, setMeaning] = useState(false);
+  const [semanticHits, setSemanticHits] = useState<SemanticHitView[]>([]);
+  const [semanticError, setSemanticError] = useState<string | null>(null);
+  const [semanticPending, setSemanticPending] = useState(false);
+  const semanticRequestRef = useRef(0);
   const debounceRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -74,7 +82,7 @@ export function SongsWorkspace() {
   }, []);
 
   useEffect(() => {
-    if (!studio.bridgeAvailable || trimmedQuery === lastQueryRef.current) return;
+    if (!studio.bridgeAvailable || meaning || trimmedQuery === lastQueryRef.current) return;
 
     if (debounceRef.current !== null) {
       window.clearTimeout(debounceRef.current);
@@ -92,7 +100,45 @@ export function SongsWorkspace() {
         debounceRef.current = null;
       }
     };
-  }, [trimmedQuery, studio.bridgeAvailable]);
+  }, [trimmedQuery, meaning, studio.bridgeAvailable]);
+
+  useEffect(() => {
+    if (!studio.bridgeAvailable) return;
+    if (!meaning || trimmedQuery === '') {
+      semanticRequestRef.current += 1;
+      setSemanticHits([]);
+      setSemanticError(null);
+      setSemanticPending(false);
+      return;
+    }
+    const request = ++semanticRequestRef.current;
+    setSemanticPending(true);
+    const timer = window.setTimeout(() => {
+      App.SearchSemantic({
+        query: trimmedQuery,
+        domain: 'song',
+        translationId: '',
+        testament: '',
+        bookIds: [],
+        limit: 50,
+        offset: 0,
+      })
+        .then((hits) => {
+          if (request !== semanticRequestRef.current) return;
+          setSemanticHits(hits ?? []);
+          setSemanticError(null);
+        })
+        .catch((error: unknown) => {
+          if (request !== semanticRequestRef.current) return;
+          setSemanticHits([]);
+          setSemanticError(errorMessage(error));
+        })
+        .finally(() => {
+          if (request === semanticRequestRef.current) setSemanticPending(false);
+        });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [meaning, trimmedQuery, studio.bridgeAvailable]);
 
   async function perform(kind: 'preview' | 'live' | 'add', section: SongSectionInput, label: string) {
     const key = `${kind}:${label}`;
@@ -210,16 +256,173 @@ export function SongsWorkspace() {
               </button>
             )}
           </div>
+          <button
+            type="button"
+            aria-pressed={meaning}
+            onClick={() => setMeaning((v) => !v)}
+            title="Search by meaning instead of exact words — needs the model from Settings → Search"
+            className={
+              'self-center min-h-[30px] px-2.5 border rounded-md text-[10px] font-medium whitespace-nowrap '
+              + (meaning
+                ? 'border-blue! bg-blue! text-white!'
+                : 'border-[#2A3950] bg-elevated text-secondary hover:text-text')
+            }
+          >
+            Meaning
+          </button>
           <span className="text-secondary text-[10px] ml-0.5" aria-live="polite">
-            {pending
+            {pending || semanticPending
               ? 'Searching…'
               : trimmedQuery === ''
                 ? `${songs.length} ${songs.length === 1 ? 'song' : 'songs'}`
-                : `${hits.length} ${hits.length === 1 ? 'match' : 'matches'}`}
+                : meaning
+                  ? `${semanticHits.length} by meaning`
+                  : `${hits.length} ${hits.length === 1 ? 'match' : 'matches'}`}
           </span>
         </div>
 
-        {trimmedQuery !== '' ? (
+        {meaning && (
+          <p className="text-[#6F809B] text-[10px] leading-snug">
+            Suggestions ranked by similarity — read the lyrics before projecting.
+            The model and index live in Settings → Search.
+          </p>
+        )}
+
+        {trimmedQuery !== '' && meaning ? (
+          semanticPending ? (
+            <div className={STATUS_PANEL} role="status">
+              <strong>Searching by meaning…</strong>
+              <p>Ranking stored titles and lyrics on this machine.</p>
+            </div>
+          ) : semanticError ? (
+            <div className={`${STATUS_PANEL} border-[#5A2B35]! [&_strong]:text-error!`} role="alert">
+              <strong>Meaning search unavailable</strong>
+              <p>{semanticError}</p>
+            </div>
+          ) : semanticHits.length === 0 ? (
+            <div className={STATUS_PANEL} role="status">
+              <Icon name="music" size={30} />
+              <strong>No songs found by meaning</strong>
+              <p>Nothing is close to "{trimmedQuery}". Try different words, or turn Meaning off for lyric search.</p>
+            </div>
+          ) : (
+            <ul className="list-none grid gap-1 m-0 p-0" aria-label="Meaning matches">
+              {semanticHits.map((hit) => {
+                // The bridge marks empty-address fields optional; a song hit
+                // always carries its ids, so narrow once here.
+                const songId = hit.songId ?? '';
+                const sectionId = hit.sectionId ?? '';
+                const songTitle = hit.songTitle ?? hit.label;
+                const similarity = (
+                  <span
+                    className="ml-1.5 px-1 py-px border border-border rounded-[4px] text-secondary text-[9px] font-normal align-middle"
+                    title="Similarity to your query — a suggestion to check, not a confidence"
+                  >
+                    {Math.round(hit.score * 100)}%
+                  </span>
+                );
+                // A title match names the whole song; opening the editor is the
+                // way in, since there is no single section to project.
+                if (sectionId === '') {
+                  return (
+                    <li
+                      key={`${songId}-title`}
+                      className={SONG_ROW}
+                      title={`Click to open ${songTitle}`}
+                      onClick={() => {
+                        if (!canAct) return;
+                        void openEditor(songId);
+                      }}
+                    >
+                      <button type="button" className={SONG_ROW_MAIN}>
+                        <span className={SONG_REF}>{songTitle}{similarity}</span>
+                        <span className={ROW_TEXT}>{hit.author ? `Title match · ${hit.author}` : 'Title match'}</span>
+                      </button>
+                      <div className="flex items-center gap-0.5" data-row-actions>
+                        <button
+                          type="button"
+                          className={ROW_ACTION}
+                          disabled={!canAct}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void openEditor(songId);
+                          }}
+                          aria-label={`Edit ${songTitle}`}
+                          title={`Edit ${songTitle}`}
+                        >
+                          <Icon name="more" size={13} /><span>Edit</span>
+                        </button>
+                      </div>
+                    </li>
+                  );
+                }
+                const label = `${songTitle} · ${hit.label}`;
+                const section = { songId, sectionId };
+                return (
+                  <li
+                    key={`${songId}-${sectionId}`}
+                    className={SONG_ROW}
+                    title={`Click to preview ${label} · double-click to send live`}
+                    onClick={(event) => {
+                      if (fromActionArea(event) || !canAct) return;
+                      void perform('preview', section, label);
+                    }}
+                    onDoubleClick={(event) => {
+                      if (fromActionArea(event) || !canAct) return;
+                      void perform('live', section, label);
+                    }}
+                  >
+                    <button type="button" className={SONG_ROW_MAIN}>
+                      <span className={SONG_REF}>{label}{similarity}</span>
+                      <span className={ROW_TEXT}>{firstLine(hit.text)}</span>
+                    </button>
+                    <div className="flex items-center gap-0.5" data-row-actions>
+                      <button
+                        type="button"
+                        className={ROW_ACTION}
+                        disabled={!canAct}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void perform('preview', section, label);
+                        }}
+                        aria-label={`Preview ${label}`}
+                        title={`Preview ${label}`}
+                      >
+                        <Icon name="preview" size={13} /><span>Preview</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={ROW_ACTION}
+                        disabled={!canAct}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void perform('live', section, label);
+                        }}
+                        aria-label={`Send ${label} live`}
+                        title={`Send ${label} live`}
+                      >
+                        <Icon name="display" size={13} /><span>Send Live</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={ROW_ACTION}
+                        disabled={!canAct}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void perform('add', section, label);
+                        }}
+                        aria-label={`Add ${label} to the service`}
+                        title={`Add ${label} to the service`}
+                      >
+                        <Icon name="plus" size={13} /><span>Add to Service</span>
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )
+        ) : trimmedQuery !== '' ? (
           hits.length === 0 ? (
             <div className={STATUS_PANEL} role="status">
               <Icon name="music" size={30} />

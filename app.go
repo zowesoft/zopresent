@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"zopresent/internal/media"
 	"zopresent/internal/presentation"
 	"zopresent/internal/scripture"
+	"zopresent/internal/search"
 	"zopresent/internal/serviceorder"
 	"zopresent/internal/settings"
 	"zopresent/internal/songs"
@@ -57,6 +59,9 @@ type App struct {
 	audio *audio.Service
 	// audioMu guards building that service, which happens on first use.
 	audioMu sync.Mutex
+	// semantic is meaning-based search over stored scripture and songs. Its
+	// sidecar starts on first use and stops with the app.
+	semantic *search.Service
 }
 
 type AppInfo struct {
@@ -78,7 +83,7 @@ type TranslationView struct {
 
 // BibleSearchRequest is one operator query. Mode "auto" resolves a reference
 // first and falls back to word search; "words", "phrase" and "prefix" force
-// full-text search.
+// full-text search; "meaning" ranks stored text by semantic similarity.
 type BibleSearchRequest struct {
 	TranslationID string `json:"translationId"`
 	Query         string `json:"query"`
@@ -120,6 +125,9 @@ type BibleVerse struct {
 	Text      string `json:"text"`
 	Snippet   string `json:"snippet,omitempty"`
 	Testament string `json:"testament"`
+	// Similarity ranks meaning-based suggestions. It is zero for reference and
+	// text results and is never a detection confidence.
+	Similarity float64 `json:"similarity,omitempty"`
 }
 
 func NewApp() *App {
@@ -193,6 +201,10 @@ func (a *App) rewireStores(core *sql.DB, paths database.Paths) {
 	a.presentation = presentation.New(a.bible, a.order, a.songs, a.media, a.themes)
 	a.detection = detection.New(core)
 	a.history = history.New(core)
+	if a.semantic != nil {
+		a.semantic.Close()
+	}
+	a.semantic = search.NewService(core, a.bible, a.songs, a.semanticLayout(), filepath.Join(paths.Root, "logs"))
 }
 
 func (a *App) ServiceShutdown() error {
@@ -200,6 +212,10 @@ func (a *App) ServiceShutdown() error {
 	// for the next run even if the database refuses to close.
 	if a.audio != nil {
 		a.audio.Stop()
+	}
+	if a.semantic != nil {
+		a.semantic.Close()
+		a.semantic = nil
 	}
 	if a.core == nil {
 		return nil
@@ -320,6 +336,10 @@ func (a *App) SearchBible(request BibleSearchRequest) (BibleSearchResponse, erro
 	}
 
 	ctx := a.context()
+
+	if mode == "meaning" {
+		return a.searchBibleMeaning(ctx, translationID, query, request)
+	}
 
 	if mode == "auto" {
 		reference, err := scripture.Parse(query)

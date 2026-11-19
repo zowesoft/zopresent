@@ -44,6 +44,7 @@ const modes = [
   { value: 'words', label: 'Full text' },
   { value: 'phrase', label: 'Exact phrase' },
   { value: 'prefix', label: 'Word prefix' },
+  { value: 'meaning', label: 'Meaning (semantic)' },
 ] as const;
 
 type Mode = (typeof modes)[number]['value'];
@@ -912,8 +913,17 @@ export function BibleWorkspace({
               <span className="text-[11px] font-bold text-secondary">{result.verse}</span>
             </span>
           )}
-          <span className="inline-flex justify-center px-1 py-px border border-border rounded-[4px] text-secondary text-[9px] tracking-[0.4px]">
-            {activeTranslation?.abbreviation ?? ''}
+          <span
+            className="inline-flex justify-center px-1 py-px border border-border rounded-[4px] text-secondary text-[9px] tracking-[0.4px]"
+            title={
+              result.similarity
+                ? 'Similarity to your query — a suggestion to check, not a confidence. Verify the verse before projecting.'
+                : undefined
+            }
+          >
+            {result.similarity
+              ? `${Math.round(result.similarity * 100)}%`
+              : (activeTranslation?.abbreviation ?? '')}
           </span>
           <SnippetText snippet={result.snippet} text={result.text} selected={selected} />
         </button>
@@ -992,7 +1002,11 @@ export function BibleWorkspace({
       return (
         <div className={STATUS_PANEL} role="status">
           <strong>Searching {activeTranslation?.abbreviation ?? ''}…</strong>
-          <p>Reading the local translation package.</p>
+          <p>
+            {mode === 'meaning'
+              ? 'Ranking stored verses by meaning on this machine.'
+              : 'Reading the local translation package.'}
+          </p>
         </div>
       );
     }
@@ -1003,8 +1017,9 @@ export function BibleWorkspace({
           <div className={STATUS_PANEL} role="status">
             <strong>No verses found</strong>
             <p>
-              Nothing in {activeTranslation?.abbreviation ?? 'this translation'} matches "
-              {trimmedQuery}". Try another reference or fewer words.
+              {mode === 'meaning'
+                ? `Nothing in ${activeTranslation?.abbreviation ?? 'this translation'} is close to "${trimmedQuery}". Try describing the idea in different words.`
+                : `Nothing in ${activeTranslation?.abbreviation ?? 'this translation'} matches "${trimmedQuery}". Try another reference or fewer words.`}
             </p>
           </div>
         );
@@ -1274,6 +1289,13 @@ export function BibleWorkspace({
                     : ''}
               </span>
           </div>
+        )}
+        {activeTab === 'search' && mode === 'meaning' && (
+          <p className="text-[#6F809B] text-[10px] leading-snug">
+            Meaning search suggests verses by similarity — the percentage is a
+            ranking, not a confidence. Read the verse before projecting it. The
+            model and index live in Settings → Search.
+          </p>
         )}
         {/* Errors surface in the pinned header so a failed projection stays
             visible without covering the verses below. */}

@@ -49,7 +49,7 @@ real text* on a machine without that env var.
 | F05 | Media library and playback | **Partial** | `internal/media`, `app_media.go`, `frontend/src/features/media` |
 | F06 | Custom theme editor | **Done** | `internal/themes`, `app_themes.go`, `frontend/src/features/themes`, `frontend/src/components/ThemedSlide.tsx` |
 | F07 | Offline AI scripture detection | **Partial** | `internal/asr`, `internal/detection`, `app_detection.go`, `frontend/src/features/detection`; `cmd/asr-bench` + `benchmarks/` groundwork |
-| F08 | Semantic scripture and song search | **Planned** | model benchmark done (`cmd/search-bench`, `benchmarks/search-set`); `internal/search` still empty |
+| F08 | Semantic scripture and song search | **Partial** | `internal/search`, migration 020, `app_search.go`, Settings → Search, Bible/Songs meaning modes; benchmark in `cmd/search-bench` + `benchmarks/` |
 | F09 | Online lyrics discovery (Genius) | **Planned** | no package, no UI |
 | F10 | EasyWorship migration | **Planned** | no package, no UI |
 
@@ -810,10 +810,62 @@ list still renders from the embedded texts, with the file link absent.
 - Whether the app itself carries a top-level LICENSE is an owner call; the
   third-party attributions above are independent of it.
 
-## F08 — Semantic scripture and song search (Planned)
+## F08 — Semantic scripture and song search (Partial)
 
-The model-selection benchmark is done; the feature itself is not built.
-`internal/search` is still empty and there is no `search_embeddings` migration.
+The benchmark picked the model and the feature is built on it: meaning search
+runs locally over a versioned index, with install/build controls in Settings
+and a meaning mode in both search boxes. Recall growth and non-Windows
+verification stay open.
+
+Done (feature slice):
+- [x] `internal/search` — MiniLM Q8_0 catalog with SHA256 pinned for the model
+      and all six llama.cpp b12436 CPU runtimes (win/linux/darwin × amd64/arm64).
+      The installer downloads only what is missing or fails its hash, extracts
+      the whole release so DLLs/shared libraries stay beside the binary, and
+      writes `THIRD-PARTY-NOTICES-EMBEDDING.txt` (separate from the speech
+      notices). Extraction helpers live in `internal/archive`, shared with the
+      speech installer and guarded against path-escaping archive entries.
+- [x] Sidecar lifecycle — `llama-server` on loopback with the benchmark-measured
+      flags, started on first build/query, health-polled, restarted if it dies,
+      killed with the app; hidden console on Windows; log under `logs/` in the
+      data root. An operator who never searches by meaning never starts it.
+- [x] Versioned incremental index — `020_search_embeddings.sql`; every row
+      carries the model ID and a content hash, so a rebuild embeds only changed
+      documents, a cancelled build resumes from stored batches, and pruning
+      drops other models' vectors and deleted content.
+- [x] Scripture and songs are **separate indexes**: status reports each
+      domain's state/counts, `BuildSemanticIndex(domain)` / `StopSemanticIndex(domain)`
+      build or stop one index without waiting on or pruning the other, and the
+      Settings card gives each its own button and progress bar. An unbuilt
+      domain's meaning search says which index to build
+      (`Store.CountDomain`/`KeysDomain`, `Store.Prune` scoped by domain,
+      `EnumerateDomain`, `Service.Build(ctx, domain, …)`).
+- [x] Retrieval — brute-force cosine over L2-normalized vectors cached in RAM;
+      scripture honors the selected translation plus the existing testament and
+      book filters; hits carry stored text and source addressing.
+- [x] App surface — `GetSemanticStatus`, `InstallSemanticEngine`,
+      `BuildSemanticIndex`, `StopSemanticIndex`, `SearchSemantic`,
+      `GetSemanticAttribution`; `semantic:progress` / `semantic:config` events;
+      `SearchBible` mode `meaning` returns kind `semantic` with a per-verse
+      similarity, reusing the existing preview/send-live pipeline.
+- [x] UI — Settings → Search tab (model install ~50 MB, per-domain build/
+      rebuild/stop with progress, licenses); Bible "Meaning (semantic)" mode
+      with similarity badges and a verify-before-projecting banner; Songs
+      "Meaning" toggle with title and section hits.
+- [x] Guardrails — similarity is a labeled suggestion, never detection
+      confidence; nothing auto-projects from it; with no model or index the
+      meaning mode explains itself and reference/full-text search keeps working;
+      no cloud fallback exists.
+- [x] The download/index card never fails silently: a rejected status or
+      action call renders its reason, falling back to "The app backend did not
+      answer." when the runtime rejects without text (an empty message used to
+      render a blank alert and hide every action). Found by a browser CDP pass
+      over Settings → Search (`SemanticSearchCard.tsx`, `SettingsWindow.tsx`).
+- [x] Tests — store round-trip/prune, incremental and cancel-resume builds,
+      enumeration over real translation/song repositories, ranking filters and
+      paging, status states, installer against a local HTTP server (zip and
+      tar.gz placement, intact-file skip, bad-hash refusal), archive escape
+      refusal.
 
 Done (benchmark slice):
 - [x] `cmd/search-bench` — pure-Go harness (CGO_ENABLED=0) that scores the
@@ -850,17 +902,14 @@ Done (benchmark slice):
       disqualified on per-install cost (~4 h first index, 91 MB vectors,
       168 MB RSS on the baseline machine).
 
-Still open (the feature build, gated on this benchmark which is now cleared):
-- `internal/search`, the versioned index / `search_embeddings` migration,
-  sidecar packaging beside the app, and the search-box UI wiring.
+Still open:
 - The query set is a hard lower bound (n=22 semantic); grow it with real
   operator queries before judging production recall.
 - Adjacent-verse misses (e.g. John 3:18 outranking John 3:16) suggest scoring
   overlapping two-verse windows; measure that and RRF fusion of FTS + cosine.
-- Traps score as high as true verses on every embedding lane, so similarity
-  must stay a labeled operator suggestion — never detection confidence, never
-  auto-projection.
 - Cold-index and latency verification on macOS/Linux; only Windows is measured.
+- Rebuilds are one-click from the stale badge, not automatic on every save;
+  auto-rebuild can follow once the incremental cost is watched in real use.
 
 ## F09 — Online lyrics discovery (Planned)
 
@@ -888,7 +937,7 @@ Tables in `internal/database/migrations/`:
 | `presentation_history` | Done (F03) — written by `internal/history` on every live change |
 | `detection_history` | Done (F07) — decisions written by `internal/detection` |
 | `bible_fts` / `bible_book_aliases` | inside per-translation DBs; alias parsing via `books.go` |
-| `search_embeddings` | not created (F08) |
+| `search_embeddings` | Done (F08) — `020_search_embeddings.sql`, versioned per model |
 | `import_runs` | not created (F10) |
 
 Note: song search uses the FTS index created in `003_songs.sql`; there is no
@@ -899,8 +948,9 @@ separate `song_fts` table in the app DB.
 Implemented: `presentation` republishes the slide pair to the studio and
 audience windows (`display.go` `publishToDisplay`, `StudioProvider.tsx`);
 `media-control`, `media-progress` and `media-ended` (`media_control.go`);
-`detection:progress` and `detection:config` (`app_detection.go`); and
-`speech:progress` / `speech:config` (`app_speech.go`).
+`detection:progress` and `detection:config` (`app_detection.go`);
+`speech:progress` / `speech:config` (`app_speech.go`); and
+`semantic:progress` / `semantic:config` (`app_search.go`).
 
 Not implemented: the `audio.*`, `transcript.*` and `scripture.*` events, which
 belong to F07.
@@ -908,8 +958,8 @@ belong to F07.
 ## Cross-cutting deviations to keep in mind
 
 - **F07/F08 placeholders vs. roadmap.** The original baseline claimed only the
-  scaffold existed; that is now stale. F01–F07 have working slices (F06 fully),
-  while F08–F10 remain genuinely unstarted.
+  scaffold existed; that is now stale. F01–F08 have working slices (F06 fully),
+  while F09–F10 remain genuinely unstarted.
 - **Shortcuts are configurable; `F9` is still a stub.** The map is stored per
   machine and edited in Settings → Shortcuts; `F8` and `F12` drive real
   detection state, `F9` has nothing to pause (see F07).
@@ -1101,9 +1151,11 @@ Different files from detection, so these run alongside it:
 
 All three are gated on external input, which is why they come last:
 
-- [ ] F08 semantic search (L): Windows baseline benchmark done — MiniLM Q8_0
-      hybrid with FTS recommended (`cmd/search-bench`, `benchmarks/README.md`).
-      The build itself (`internal/search`, `search_embeddings`) is still open.
+- [x] F08 semantic search (L): benchmark picked MiniLM Q8_0 hybrid with FTS
+      (`cmd/search-bench`, `benchmarks/README.md`); the feature is built —
+      `internal/search`, `search_embeddings`, sidecar lifecycle, Settings
+      controls and meaning modes in both search boxes. Recall growth and
+      macOS/Linux verification remain open.
 - [ ] F09 Genius (M–L): provider terms and an OS credential store, not just code.
 - [ ] F10 EasyWorship (L): permitted fixtures, a supported-format list,
       `import_runs`, and transactional import with a result summary.

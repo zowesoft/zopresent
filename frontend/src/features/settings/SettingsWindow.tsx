@@ -8,10 +8,13 @@ import { formatBytes, formatDateTime } from '../../lib/format';
 import { DEFAULT_SHORTCUTS, SHORTCUT_ACTIONS, comboFromEvent, formatCombo, isBindable } from '../../lib/shortcuts';
 import type { ShortcutAction } from '../../lib/shortcuts';
 import { SpeechEngineCard } from './SpeechEngineCard';
+import { SemanticSearchCard } from './SemanticSearchCard';
 
 function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
+  // Same guard as SemanticSearchCard: a rejection without text must not render
+  // a blank alert.
+  const message = error instanceof Error ? error.message : String(error);
+  return message.trim() || 'The app backend did not answer.';
 }
 
 // Select value for a spec typed by hand rather than discovered on disk.
@@ -29,12 +32,13 @@ const DETECTION_TYPES: { method: string; key: keyof DetectionTypeStates; label: 
 
 // The window is tall, so each group gets its own tab instead of stacking every
 // card into one long scroll.
-type SettingsTabId = 'bible' | 'slides' | 'detection' | 'shortcuts' | 'backups';
+type SettingsTabId = 'bible' | 'slides' | 'detection' | 'search' | 'shortcuts' | 'backups';
 
 const SETTINGS_TABS: { id: SettingsTabId; label: string }[] = [
   { id: 'bible', label: 'Bible' },
   { id: 'slides', label: 'Slides' },
   { id: 'detection', label: 'Detection' },
+  { id: 'search', label: 'Search' },
   { id: 'shortcuts', label: 'Shortcuts' },
   { id: 'backups', label: 'Backups' },
 ];
@@ -533,6 +537,13 @@ export function SettingsWindow() {
               })}
             </ul>
           </div>
+        </section>
+
+        <section className={pane('search')} aria-labelledby="settings-search-title">
+          <div className="flex items-center justify-between gap-3">
+            <h3 id="settings-search-title">Semantic search</h3>
+          </div>
+          <SemanticSearchCard />
         </section>
 
         <section className={pane('shortcuts')} aria-labelledby="settings-shortcuts-title">
